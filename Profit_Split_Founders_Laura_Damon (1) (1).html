@@ -32,6 +32,9 @@
     .inline { display: inline-flex; gap: 10px; align-items: center; }
     button { padding: 8px 12px; font-size: var(--font); cursor: pointer; }
     .weights { margin-top: 4px; font-size: 12px; }
+    .summary { margin-top: 24px; padding: 16px; border: 1px solid #ddd; border-radius: 8px; background: #f9f9f9; }
+    .summary.hidden { display: none; }
+    .summary h2 { margin-top: 0; font-size: 16px; }
   </style>
 </head>
 <body>
@@ -59,6 +62,7 @@
       <div class="inline">
         <button id="recalcBtn">Recalculate</button>
         <button id="downloadBtn">Download CSV</button>
+        <button id="summarizeBtn">Summarize Report</button>
       </div>
     </div>
   </div>
@@ -77,6 +81,11 @@
     </div>
   </div>
 
+  <div id="summaryContainer" class="summary hidden">
+    <h2>Executive Summary</h2>
+    <div id="summaryContent" class="muted">Generate a summary to see results here.</div>
+  </div>
+
   <div style="margin-top:18px;" class="muted">
     <div>Formulas (P = profit, c = carry as decimal):</div>
     <div>Founders = P*W<sub>F</sub> + c*P*(W<sub>L</sub> + W<sub>D</sub>)</div>
@@ -93,17 +102,19 @@
       deployed:    { F: 340/570, L: 175/570, D: 55/570 }
     };
 
-    const parties = [
-      { key: 'Founders (Yoni+Spence)', className: 'founders', id: 'Founders' },
-      { key: 'Laura',  className: 'laura',  id: 'Laura' },
-      { key: 'Damon',  className: 'damon',  id: 'Damon' }
-    ];
-
     const profitInput = document.getElementById('profitInput');
     const carryInput = document.getElementById('carryInput');
     const scenarioSel = document.getElementById('scenario');
     const weightsInfo = document.getElementById('weightsInfo');
     const barsEl = document.getElementById('bars');
+    const summarizeBtn = document.getElementById('summarizeBtn');
+    const summaryContainer = document.getElementById('summaryContainer');
+    const summaryContent = document.getElementById('summaryContent');
+
+    const state = {
+      ocrMetrics: null,
+      summary: ''
+    };
 
     function fmt(n) { return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
     function pct(n) { return (n*100).toFixed(2) + '%'; }
@@ -123,6 +134,21 @@
       const scenario = scenarioSel.value;
       const { founders, laura, damon, W } = calcSplit(P, carryPct, scenario);
       const total = founders + laura + damon;
+
+      state.ocrMetrics = {
+        profit: P,
+        carryPct,
+        scenario,
+        founders,
+        laura,
+        damon,
+        total,
+        weights: {
+          founders: W.F,
+          laura: W.L,
+          damon: W.D
+        }
+      };
 
       // Show current weights
       weightsInfo.textContent = `Weights → Founders: ${pct(W.F)}, Laura: ${pct(W.L)}, Damon: ${pct(W.D)} (sum ${( (W.F+W.L+W.D)*100 ).toFixed(2)}%)`;
@@ -179,6 +205,64 @@
       stackLabel.textContent = fmt(total);
     }
 
+    async function summarizeReport() {
+      if (!state.ocrMetrics || Object.keys(state.ocrMetrics).length === 0) {
+        alert('OCR metrics are not available. Recalculate the report first.');
+        return;
+      }
+
+      const apiKey = typeof window !== 'undefined' && window.CHATGPT_API_KEY ? window.CHATGPT_API_KEY : '';
+      if (!apiKey) {
+        alert('Set window.CHATGPT_API_KEY with your ChatGPT API key before generating a summary.');
+        return;
+      }
+
+      summaryContainer.classList.remove('hidden');
+      summaryContent.textContent = 'Generating executive summary...';
+
+      try {
+        const payload = {
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an assistant who writes concise executive summaries of OCR profit split metrics.'
+            },
+            {
+              role: 'user',
+              content: `Provide an executive summary for the following OCR metrics:\n${JSON.stringify(state.ocrMetrics, null, 2)}`
+            }
+          ]
+        };
+
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+
+        const data = await response.json();
+        const summaryText = data?.choices?.[0]?.message?.content?.trim();
+
+        if (!summaryText) {
+          throw new Error('The ChatGPT API did not return a summary.');
+        }
+
+        summaryContent.textContent = summaryText;
+        state.summary = summaryText;
+      } catch (error) {
+        console.error(error);
+        summaryContent.textContent = `Unable to generate summary: ${error.message}`;
+      }
+    }
+
     function toCsv() {
       const P = Math.max(0, Number(profitInput.value || 0));
       const carryPct = Math.min(100, Math.max(0, Number(carryInput.value || 0)));
@@ -203,6 +287,7 @@
 
     document.getElementById('recalcBtn').addEventListener('click', render);
     document.getElementById('downloadBtn').addEventListener('click', toCsv);
+    summarizeBtn.addEventListener('click', summarizeReport);
     profitInput.addEventListener('input', render);
     carryInput.addEventListener('input', render);
     scenarioSel.addEventListener('change', render);
