@@ -327,6 +327,7 @@ function AdvancedFieldsSection({
   }
 
   const snapshotLabel = advancedInputs.date ? `Snapshot: ${advancedInputs.date}` : 'Snapshot date pending'
+  const realizedProfit = advancedNumbers.pnl
 
   return (
     <section className={panelClasses.join(' ')}>
@@ -504,10 +505,10 @@ function AdvancedFieldsSection({
                 <dd>{formatPercent(normalizedWeights[classification.key])}</dd>
               </div>
               <div>
-                <dt>Share of combined PnL</dt>
+                <dt>Share of realized PnL</dt>
                 <dd>
-                  {combinedProfit !== 0
-                    ? formatPercent((advancedDistribution[classification.key] / combinedProfit || 0))
+                  {realizedProfit !== 0
+                    ? formatPercent((advancedDistribution[classification.key] / realizedProfit || 0))
                     : formatPercent(0)}
                 </dd>
               </div>
@@ -732,10 +733,11 @@ function App() {
     : { founder: 0, investor: 0, moonbag: 0 }
 
   const combinedProfit = advancedNumbers.pnl + advancedNumbers.unrealizedPnl
+  const realizedProfit = advancedNumbers.pnl
   const advancedDistribution = {
-    founder: combinedProfit * normalizedWeights.founder,
-    investor: combinedProfit * normalizedWeights.investor,
-    moonbag: combinedProfit * normalizedWeights.moonbag,
+    founder: realizedProfit * normalizedWeights.founder,
+    investor: realizedProfit * normalizedWeights.investor,
+    moonbag: realizedProfit * normalizedWeights.moonbag,
   }
 
   const winRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.winTrades / advancedNumbers.totalTrades : 0
