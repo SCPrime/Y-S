@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html>
 <head>
@@ -9,7 +8,7 @@
     :root { --bar-h: 28px; --gap: 10px; --font: 14px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
     h1 { font-size: 18px; margin: 0 0 10px; }
-    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--gap); margin: 12px 0 20px; align-items: end; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--gap); margin: 12px 0 20px; align-items: stretch; }
     .control { display: flex; flex-direction: column; }
     label { font-size: var(--font); margin-bottom: 6px; }
     input[type="number"], select { padding: 8px; font-size: var(--font); }
@@ -32,182 +31,641 @@
     .inline { display: inline-flex; gap: 10px; align-items: center; }
     button { padding: 8px 12px; font-size: var(--font); cursor: pointer; }
     .weights { margin-top: 4px; font-size: 12px; }
+    .upload-box { border: 1px dashed #c4c4c4; border-radius: 6px; padding: 10px; background: #fafafa; display: grid; gap: 6px; font-size: 12px; }
+    .upload-box input[type="file"] { font-size: 12px; }
+    .upload-status { font-size: 12px; }
+    .upload-status.uploading { color: #555; }
+    .upload-status.success { color: #1b7b4c; }
+    .upload-status.error { color: #c0392b; }
+    .upload-results { display: grid; gap: 4px; }
+    .upload-results dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+    .upload-results dt { font-weight: 600; }
+    .upload-results dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+    .upload-text { background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; padding: 6px; max-height: 120px; overflow: auto; font-family: ui-monospace, SFMono-Regular, SFMono, "Liberation Mono", Menlo, Consolas, monospace; white-space: pre-wrap; }
+    .upload-actions { display: flex; gap: 6px; }
+    .upload-actions button { font-size: 12px; padding: 6px 10px; }
   </style>
 </head>
 <body>
-  <h1>Interactive Profit Split — Founders (Yoni+Spence), Laura, Damon</h1>
-  <div class="muted">Based on capital‑days and a 20% carry on Laura & Damon profits (carry goes to Founders). Damon can be toggled as deployed or not.</div>
-  <div class="controls">
-    <div class="control">
-      <label for="profitInput">Profit (P)</label>
-      <input id="profitInput" type="number" step="1" min="0" value="4113">
-    </div>
-    <div class="control">
-      <label for="carryInput">Carry on Laura & Damon (%)</label>
-      <input id="carryInput" type="number" step="1" min="0" max="100" value="20">
-    </div>
-    <div class="control">
-      <label for="scenario">Damon status</label>
-      <select id="scenario">
-        <option value="notdeployed" selected>Not deployed (0 weight)</option>
-        <option value="deployed">Deployed on 2025‑08‑02 (5,000 capital)</option>
-      </select>
-      <div class="weights muted" id="weightsInfo"></div>
-    </div>
-    <div class="control">
-      <label>&nbsp;</label>
-      <div class="inline">
-        <button id="recalcBtn">Recalculate</button>
-        <button id="downloadBtn">Download CSV</button>
-      </div>
-    </div>
-  </div>
+  <div id="root"></div>
 
-  <div class="bars" id="bars"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <div class="stacked" style="margin-top:18px;">
-    <div class="bar-row">
-      <div class="bar-label">Stacked (Total Profit)</div>
-      <div class="bar-track" id="stackTrack">
-        <div class="segment founders" id="segFounders" style="width:0%"></div>
-        <div class="segment laura" id="segLaura" style="width:0%"></div>
-        <div class="segment damon" id="segDamon" style="width:0%"></div>
-      </div>
-      <div class="bar-value" id="stackLabel">$0.00</div>
-    </div>
-  </div>
+  <script type="text/babel" data-presets="env,react">
+    const { useCallback, useMemo, useState } = React;
 
-  <div style="margin-top:18px;" class="muted">
-    <div>Formulas (P = profit, c = carry as decimal):</div>
-    <div>Founders = P*W<sub>F</sub> + c*P*(W<sub>L</sub> + W<sub>D</sub>)</div>
-    <div>Laura = (1 − c)*P*W<sub>L</sub></div>
-    <div>Damon = (1 − c)*P*W<sub>D</sub></div>
-  </div>
-
-  <script>
-    // Fixed capital-day weights for two scenarios:
-    // Scenario A: Damon not deployed → weights (Founders=340/515, Laura=175/515, Damon=0/515)
-    // Scenario B: Damon deployed (Aug 2, 2025; 5,000) → weights (Founders=340/570, Laura=175/570, Damon=55/570)
     const WEIGHTS = {
       notdeployed: { F: 340/515, L: 175/515, D: 0/515 },
       deployed:    { F: 340/570, L: 175/570, D: 55/570 }
     };
 
-    const parties = [
-      { key: 'Founders (Yoni+Spence)', className: 'founders', id: 'Founders' },
-      { key: 'Laura',  className: 'laura',  id: 'Laura' },
-      { key: 'Damon',  className: 'damon',  id: 'Damon' }
-    ];
+    const AMOUNT_REGEX = /[-+]?[\$€£]?\(?\d[\d,]*(?:\.\d+)?\)?(?:\s?[kKmM])?/;
 
-    const profitInput = document.getElementById('profitInput');
-    const carryInput = document.getElementById('carryInput');
-    const scenarioSel = document.getElementById('scenario');
-    const weightsInfo = document.getElementById('weightsInfo');
-    const barsEl = document.getElementById('bars');
-
-    function fmt(n) { return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
-    function pct(n) { return (n*100).toFixed(2) + '%'; }
-
-    function calcSplit(P, carryPct, scenario) {
-      const c = (carryPct || 0)/100.0;
-      const W = WEIGHTS[scenario];
-      const founders = P*(W.F + c*(W.L + W.D));
-      const laura    = P*((1 - c)*W.L);
-      const damon    = P*((1 - c)*W.D);
-      return { founders, laura, damon, W };
+    function escapeRegex(str) {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
-    function render() {
-      const P = Math.max(0, Number(profitInput.value || 0));
-      const carryPct = Math.min(100, Math.max(0, Number(carryInput.value || 0)));
-      const scenario = scenarioSel.value;
-      const { founders, laura, damon, W } = calcSplit(P, carryPct, scenario);
+    function fmt(n, currencySymbol = '$') {
+      const number = Number.isFinite(n) ? n : 0;
+      const sign = number < 0 ? '-' : '';
+      const absolute = Math.abs(number);
+      const formatted = absolute.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      return `${sign}${currencySymbol}${formatted}`;
+    }
+
+    function pct(n) {
+      return (n * 100).toFixed(2) + '%';
+    }
+
+    function calcSplit(profit, carryPct, scenario) {
+      const P = Math.max(0, Number(profit) || 0);
+      const carrySanitized = Math.min(100, Math.max(0, Number(carryPct) || 0));
+      const c = carrySanitized / 100;
+      const W = WEIGHTS[scenario] || WEIGHTS.notdeployed;
+      const founders = P * (W.F + c * (W.L + W.D));
+      const laura = P * ((1 - c) * W.L);
+      const damon = P * ((1 - c) * W.D);
       const total = founders + laura + damon;
+      return { founders, laura, damon, total, weights: W };
+    }
 
-      // Show current weights
-      weightsInfo.textContent = `Weights → Founders: ${pct(W.F)}, Laura: ${pct(W.L)}, Damon: ${pct(W.D)} (sum ${( (W.F+W.L+W.D)*100 ).toFixed(2)}%)`;
+    function detectCurrencySymbol(text) {
+      const match = text && text.match(/[\$€£]/);
+      return match ? match[0] : null;
+    }
 
-      // Clear bars
-      barsEl.innerHTML = '';
+    function parseAmount(rawValue, fallbackCurrency) {
+      if (!rawValue || typeof rawValue !== 'string' && typeof rawValue !== 'number') {
+        return { value: null, currency: fallbackCurrency || null };
+      }
+      if (typeof rawValue === 'number') {
+        return { value: rawValue, currency: fallbackCurrency || null };
+      }
+      const currencyMatch = rawValue.match(/[\$€£]/);
+      const currency = currencyMatch ? currencyMatch[0] : (fallbackCurrency || null);
+      let sanitized = rawValue.trim();
+      const negativeByParens = sanitized.includes('(') && sanitized.includes(')');
+      sanitized = sanitized.replace(/[\$€£]/g, '').replace(/,/g, '').replace(/[()]/g, '');
+      let multiplier = 1;
+      if (/[kK]\b/.test(sanitized)) {
+        multiplier = 1e3;
+        sanitized = sanitized.replace(/[kK]\b/, '');
+      }
+      if (/[mM]\b/.test(sanitized)) {
+        multiplier = 1e6;
+        sanitized = sanitized.replace(/[mM]\b/, '');
+      }
+      sanitized = sanitized.replace(/\s+/g, '');
+      let value = parseFloat(sanitized);
+      if (Number.isNaN(value)) {
+        return { value: null, currency };
+      }
+      if (negativeByParens || rawValue.trim().startsWith('-')) {
+        value = -value;
+      }
+      return { value: value * multiplier, currency };
+    }
 
-      const rows = [
-        { label: 'Founders (Yoni+Spence)', value: founders, className: 'founders' },
-        { label: 'Laura', value: laura, className: 'laura' },
-        { label: 'Damon', value: damon, className: 'damon' }
-      ];
+    function findValueByLabels(text, lines, lowerLines, labels) {
+      if (!text) return null;
+      for (const label of labels) {
+        const regex = new RegExp(`${escapeRegex(label)}[\t\s:]*([-+]?[\$€£]?\(?[\d,]*(?:\.\d+)?\)?(?:\s?[kKmM])?)`, 'i');
+        const match = text.match(regex);
+        if (match && match[1]) {
+          return match[1];
+        }
+      }
+      for (let i = 0; i < lines.length; i += 1) {
+        const lower = lowerLines[i];
+        for (const label of labels) {
+          if (lower.includes(label)) {
+            const inLineMatch = lines[i].match(AMOUNT_REGEX);
+            if (inLineMatch) {
+              return inLineMatch[0];
+            }
+            if (i + 1 < lines.length) {
+              const nextMatch = lines[i + 1].match(AMOUNT_REGEX);
+              if (nextMatch) {
+                return nextMatch[0];
+              }
+            }
+          }
+        }
+      }
+      return null;
+    }
 
-      rows.forEach(r => {
-        const row = document.createElement('div');
-        row.className = 'bar-row';
+    function extractFinancialFieldsFromText(text) {
+      if (!text) {
+        return { values: {}, raw: {}, currencySymbol: null, profitCandidate: null, text: '' };
+      }
+      const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      const lowerLines = lines.map(line => line.toLowerCase());
+      const currencySymbol = detectCurrencySymbol(text);
+      const raw = {};
+      const values = {};
 
-        const label = document.createElement('div');
-        label.className = 'bar-label';
-        label.textContent = r.label;
+      function store(key, rawValue) {
+        if (!rawValue || raw[key]) return;
+        const parsed = parseAmount(rawValue, currencySymbol);
+        if (parsed.value == null) return;
+        raw[key] = rawValue;
+        values[key] = parsed.value;
+      }
 
-        const track = document.createElement('div');
-        track.className = 'bar-track';
+      store('totalValue', findValueByLabels(text, lines, lowerLines, [
+        'total value',
+        'total account value',
+        'account value',
+        'total equity',
+        'equity with loan value',
+        'portfolio value',
+        'total portfolio value'
+      ]));
 
-        const fill = document.createElement('div');
-        fill.className = 'bar-fill ' + r.className;
-        const pctw = total > 0 ? (r.value / total) * 100 : 0;
-        fill.style.width = pctw.toFixed(4) + '%';
+      store('netLiquidity', findValueByLabels(text, lines, lowerLines, [
+        'net liquidity',
+        'net liq',
+        'net liquidation'
+      ]));
 
-        const value = document.createElement('div');
-        value.className = 'bar-value';
-        value.textContent = fmt(r.value);
+      store('totalPnl', findValueByLabels(text, lines, lowerLines, [
+        'total pnl',
+        'total p&l',
+        'total pl',
+        'total gain',
+        'total profit'
+      ]));
 
-        track.appendChild(fill);
-        row.appendChild(label);
-        row.appendChild(track);
-        row.appendChild(value);
-        barsEl.appendChild(row);
+      store('realizedPnl', findValueByLabels(text, lines, lowerLines, [
+        'realized pnl',
+        'realized p&l',
+        'realized pl',
+        'rlzd pnl'
+      ]));
+
+      store('unrealizedPnl', findValueByLabels(text, lines, lowerLines, [
+        'unrealized pnl',
+        'unrealized p&l',
+        'unrealized pl',
+        'unrlzd pnl'
+      ]));
+
+      store('dayPnl', findValueByLabels(text, lines, lowerLines, [
+        'day pnl',
+        'day p&l',
+        'day pl',
+        "today's pnl",
+        'todays pnl'
+      ]));
+
+      store('cash', findValueByLabels(text, lines, lowerLines, [
+        'cash balance',
+        'cash & sweep',
+        'cash'
+      ]));
+
+      let profitCandidate = values.totalPnl ?? null;
+      if (profitCandidate == null && (values.realizedPnl != null || values.unrealizedPnl != null)) {
+        profitCandidate = (values.realizedPnl || 0) + (values.unrealizedPnl || 0);
+      }
+      if (profitCandidate == null) {
+        profitCandidate = values.totalValue ?? values.netLiquidity ?? null;
+      }
+
+      return { values, raw, currencySymbol, profitCandidate, text };
+    }
+
+    function mapStructuredFields(structured) {
+      if (!structured) {
+        return { values: {}, raw: {}, currencySymbol: null };
+      }
+      const values = {};
+      const raw = {};
+      let currencySymbol = null;
+
+      const entries = Array.isArray(structured)
+        ? structured
+        : Object.entries(structured).map(([key, value]) => ({ key, value }));
+
+      function assign(targetKey, parsedValue, sourceRaw) {
+        if (parsedValue == null || values[targetKey] != null) return;
+        values[targetKey] = parsedValue;
+        raw[targetKey] = typeof sourceRaw === 'string' ? sourceRaw : String(parsedValue);
+      }
+
+      entries.forEach(item => {
+        const key = (item && (item.key || item.name || item.field || item[0])) || item?.key;
+        const value = item && (item.value !== undefined ? item.value : (item.amount ?? item.number ?? item.data ?? item[1]));
+        if (!key) return;
+        const normalizedKey = String(key).toLowerCase();
+        let rawValue = value;
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          if ('amount' in value) rawValue = value.amount;
+          else if ('value' in value) rawValue = value.value;
+          else if ('text' in value) rawValue = value.text;
+        }
+        const parsed = parseAmount(typeof rawValue === 'number' ? String(rawValue) : String(rawValue || ''), currencySymbol || undefined);
+        if (parsed.currency && !currencySymbol) {
+          currencySymbol = parsed.currency;
+        }
+        const numeric = typeof rawValue === 'number' ? rawValue : parsed.value;
+        if (numeric == null) return;
+
+        if (normalizedKey.includes('total') && (normalizedKey.includes('pnl') || normalizedKey.includes('p&l') || normalizedKey.includes('profit'))) {
+          assign('totalPnl', numeric, rawValue);
+        }
+        if (normalizedKey.includes('total') && normalizedKey.includes('value')) {
+          assign('totalValue', numeric, rawValue);
+        }
+        if (normalizedKey.includes('net') && (normalizedKey.includes('liq') || normalizedKey.includes('liquidity'))) {
+          assign('netLiquidity', numeric, rawValue);
+        }
+        if (normalizedKey.includes('unreal')) {
+          assign('unrealizedPnl', numeric, rawValue);
+        }
+        if (normalizedKey.includes('real') && !normalizedKey.includes('unreal')) {
+          assign('realizedPnl', numeric, rawValue);
+        }
+        if (normalizedKey.includes('cash')) {
+          assign('cash', numeric, rawValue);
+        }
+        if (normalizedKey.includes('day') && (normalizedKey.includes('pnl') || normalizedKey.includes('p&l'))) {
+          assign('dayPnl', numeric, rawValue);
+        }
       });
 
-      // Stacked
-      const segF = document.getElementById('segFounders');
-      const segL = document.getElementById('segLaura');
-      const segD = document.getElementById('segDamon');
-      const stackLabel = document.getElementById('stackLabel');
+      return { values, raw, currencySymbol };
+    }
 
+    function normalizeOcrPayload(payload) {
+      if (payload == null) {
+        return { text: '', structured: null };
+      }
+
+      if (typeof payload === 'string') {
+        const trimmed = payload.trim();
+        if (!trimmed) {
+          return { text: '', structured: null };
+        }
+        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+          try {
+            return normalizeOcrPayload(JSON.parse(trimmed));
+          } catch (error) {
+            return { text: trimmed, structured: null };
+          }
+        }
+        return { text: trimmed, structured: null };
+      }
+
+      if (Array.isArray(payload)) {
+        const combined = payload.map(item => normalizeOcrPayload(item));
+        const text = combined.map(item => item.text).filter(Boolean).join('\n');
+        const structured = combined.find(item => item.structured)?.structured || null;
+        return { text, structured };
+      }
+
+      if (payload.text) {
+        return { text: String(payload.text), structured: payload.fields || payload.data || null };
+      }
+
+      if (payload.fullTextAnnotation && payload.fullTextAnnotation.text) {
+        return { text: payload.fullTextAnnotation.text, structured: null };
+      }
+
+      if (payload.responses && Array.isArray(payload.responses)) {
+        for (const response of payload.responses) {
+          const normalized = normalizeOcrPayload(response);
+          if (normalized.text) {
+            return normalized;
+          }
+        }
+      }
+
+      if (payload.choices && Array.isArray(payload.choices)) {
+        const first = payload.choices[0];
+        if (first) {
+          if (typeof first.text === 'string') {
+            return normalizeOcrPayload(first.text);
+          }
+          if (first.message) {
+            const { content } = first.message;
+            if (typeof content === 'string') {
+              return normalizeOcrPayload(content);
+            }
+            if (Array.isArray(content)) {
+              const joined = content.map(part => part?.text || '').join('\n');
+              return { text: joined.trim(), structured: null };
+            }
+          }
+        }
+      }
+
+      if (payload.data && (payload.data.text || payload.data.fields)) {
+        return { text: payload.data.text ? String(payload.data.text) : '', structured: payload.data.fields || null };
+      }
+
+      if (payload.result && (payload.result.text || payload.result.fields)) {
+        return { text: payload.result.text ? String(payload.result.text) : '', structured: payload.result.fields || null };
+      }
+
+      const fields = payload.fields || payload.annotations || null;
+      return { text: JSON.stringify(payload, null, 2), structured: fields };
+    }
+
+    function parseFinancialResponse(payload) {
+      const normalized = normalizeOcrPayload(payload);
+      const textual = extractFinancialFieldsFromText(normalized.text);
+      const structured = mapStructuredFields(normalized.structured);
+      const mergedValues = { ...textual.values, ...structured.values };
+      const mergedRaw = { ...textual.raw, ...structured.raw };
+      const currencySymbol = structured.currencySymbol || textual.currencySymbol || '$';
+
+      let profitCandidate = textual.profitCandidate;
+      if (structured.values.totalPnl != null) {
+        profitCandidate = structured.values.totalPnl;
+      } else if (structured.values.realizedPnl != null || structured.values.unrealizedPnl != null) {
+        profitCandidate = (structured.values.realizedPnl || 0) + (structured.values.unrealizedPnl || 0);
+      } else if (structured.values.totalValue != null && profitCandidate == null) {
+        profitCandidate = structured.values.totalValue;
+      }
+      if (profitCandidate == null) {
+        const realized = mergedValues.realizedPnl;
+        const unrealized = mergedValues.unrealizedPnl;
+        if (realized != null || unrealized != null) {
+          profitCandidate = (realized || 0) + (unrealized || 0);
+        } else if (mergedValues.totalPnl != null) {
+          profitCandidate = mergedValues.totalPnl;
+        } else if (mergedValues.totalValue != null) {
+          profitCandidate = mergedValues.totalValue;
+        }
+      }
+
+      return {
+        text: textual.text,
+        currencySymbol,
+        values: mergedValues,
+        rawValues: mergedRaw,
+        profitCandidate,
+        hasStructured: Object.keys(structured.values).length > 0
+      };
+    }
+
+    async function sendImageToOcr(file) {
+      const config = window.OCR_CONFIG || {};
+      const endpoint = config.endpoint;
+      if (!endpoint) {
+        throw new Error('No OCR endpoint configured. Set window.OCR_CONFIG.endpoint to your OCR service URL.');
+      }
+      const method = config.method || 'POST';
+      const fieldName = config.fieldName || 'file';
+      const formData = new FormData();
+      formData.append(fieldName, file);
+      if (config.extraFields) {
+        Object.entries(config.extraFields).forEach(([key, value]) => {
+          formData.append(key, value);
+        });
+      }
+      const headers = { ...(config.headers || {}) };
+      if (config.apiKey) {
+        const headerName = config.apiKeyHeader || 'Authorization';
+        const keyValue = headerName.toLowerCase() === 'authorization' && !String(config.apiKey).startsWith('Bearer ')
+          ? `Bearer ${config.apiKey}`
+          : config.apiKey;
+        headers[headerName] = keyValue;
+      }
+      const response = await fetch(endpoint, { method, headers, body: formData });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`OCR request failed (${response.status} ${response.statusText})${errorText ? `: ${errorText}` : ''}`);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        return response.json();
+      }
+      const text = await response.text();
+      try {
+        return JSON.parse(text);
+      } catch (error) {
+        return { text };
+      }
+    }
+
+    function formatNumberForInput(value) {
+      if (value == null || Number.isNaN(value)) return '';
+      const rounded = Math.round((value + Number.EPSILON) * 100) / 100;
+      return String(rounded);
+    }
+
+    function BarRow({ label, value, className, total, currencySymbol }) {
+      const pctWidth = total > 0 ? (value / total) * 100 : 0;
+      return (
+        <div className="bar-row">
+          <div className="bar-label">{label}</div>
+          <div className="bar-track">
+            <div className={`bar-fill ${className}`} style={{ width: `${pctWidth.toFixed(4)}%` }} />
+          </div>
+          <div className="bar-value">{fmt(value, currencySymbol)}</div>
+        </div>
+      );
+    }
+
+    function StackedBar({ founders, laura, damon, total, currencySymbol }) {
       const pF = total > 0 ? (founders / total) * 100 : 0;
       const pL = total > 0 ? (laura / total) * 100 : 0;
       const pD = total > 0 ? (damon / total) * 100 : 0;
-
-      segF.style.width = pF.toFixed(4) + '%';
-      segL.style.width = pL.toFixed(4) + '%';
-      segD.style.width = pD.toFixed(4) + '%';
-      stackLabel.textContent = fmt(total);
+      return (
+        <div className="stacked" style={{ marginTop: '18px' }}>
+          <div className="bar-row">
+            <div className="bar-label">Stacked (Total Profit)</div>
+            <div className="bar-track" id="stackTrack">
+              <div className="segment founders" style={{ width: `${pF.toFixed(4)}%` }} />
+              <div className="segment laura" style={{ width: `${pL.toFixed(4)}%` }} />
+              <div className="segment damon" style={{ width: `${pD.toFixed(4)}%` }} />
+            </div>
+            <div className="bar-value" id="stackLabel">{fmt(total, currencySymbol)}</div>
+          </div>
+        </div>
+      );
     }
 
-    function toCsv() {
-      const P = Math.max(0, Number(profitInput.value || 0));
-      const carryPct = Math.min(100, Math.max(0, Number(carryInput.value || 0)));
-      const scenario = scenarioSel.value;
-      const { founders, laura, damon, W } = calcSplit(P, carryPct, scenario);
+    function UploadPanel({ onPrefill, currencySymbol }) {
+      const [status, setStatus] = useState({ type: 'idle', message: '' });
+      const [parsed, setParsed] = useState(null);
 
-      const rows = [
-        ['Party','Amount','Profit','Carry_%','Scenario','W_Founders','W_Laura','W_Damon'],
-        ['Founders (Yoni+Spence)', founders.toFixed(2), P.toFixed(2), carryPct, scenario, (W.F*100).toFixed(4)+'%', (W.L*100).toFixed(4)+'%', (W.D*100).toFixed(4)+'%'],
-        ['Laura', laura.toFixed(2), P.toFixed(2), carryPct, scenario, '', '', ''],
-        ['Damon', damon.toFixed(2), P.toFixed(2), carryPct, scenario, '', '', '']
-      ];
-      const csv = rows.map(r => r.join(',')).join('\n');
-      const blob = new Blob([csv], {type: 'text/csv'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'profit_split_founders_laura_damon.csv';
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const handleFileChange = useCallback(async (event) => {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+        setStatus({ type: 'uploading', message: `Processing ${file.name}…` });
+        try {
+          const payload = await sendImageToOcr(file);
+          const parsedResult = parseFinancialResponse(payload);
+          if (!parsedResult || !parsedResult.text) {
+            throw new Error('OCR response did not contain text.');
+          }
+          setParsed(parsedResult);
+          setStatus({ type: 'success', message: 'OCR processed successfully.' });
+          if (onPrefill) {
+            onPrefill(parsedResult);
+          }
+        } catch (error) {
+          console.error(error);
+          setStatus({ type: 'error', message: error.message || 'Failed to process screenshot.' });
+        }
+      }, [onPrefill]);
+
+      const handleReapply = useCallback(() => {
+        if (parsed && onPrefill) {
+          onPrefill(parsed);
+          setStatus(prev => ({ ...prev, message: 'Parsed values applied to calculator.' }));
+        }
+      }, [parsed, onPrefill]);
+
+      const currency = parsed?.currencySymbol || currencySymbol || '$';
+      const values = parsed?.values || {};
+
+      return (
+        <div className="upload-box">
+          <input type="file" accept="image/*" onChange={handleFileChange} />
+          {status.type !== 'idle' && (
+            <div className={`upload-status ${status.type}`}>{status.message}</div>
+          )}
+          {parsed && (
+            <div className="upload-results">
+              <dl>
+                <dt>Total value</dt>
+                <dd>{values.totalValue != null ? fmt(values.totalValue, currency) : '—'}</dd>
+                <dt>Total P&amp;L</dt>
+                <dd>{values.totalPnl != null ? fmt(values.totalPnl, currency) : '—'}</dd>
+                <dt>Realized P&amp;L</dt>
+                <dd>{values.realizedPnl != null ? fmt(values.realizedPnl, currency) : '—'}</dd>
+                <dt>Unrealized P&amp;L</dt>
+                <dd>{values.unrealizedPnl != null ? fmt(values.unrealizedPnl, currency) : '—'}</dd>
+                <dt>Net liquidity</dt>
+                <dd>{values.netLiquidity != null ? fmt(values.netLiquidity, currency) : '—'}</dd>
+              </dl>
+              <div className="upload-actions">
+                <button type="button" onClick={handleReapply}>Apply parsed totals</button>
+              </div>
+              <details>
+                <summary>OCR text</summary>
+                <div className="upload-text">{parsed.text}</div>
+              </details>
+            </div>
+          )}
+        </div>
+      );
     }
 
-    document.getElementById('recalcBtn').addEventListener('click', render);
-    document.getElementById('downloadBtn').addEventListener('click', toCsv);
-    profitInput.addEventListener('input', render);
-    carryInput.addEventListener('input', render);
-    scenarioSel.addEventListener('change', render);
+    function App() {
+      const [profitInput, setProfitInput] = useState('4113');
+      const [carryInput, setCarryInput] = useState('20');
+      const [scenario, setScenario] = useState('notdeployed');
+      const [parsedFinancial, setParsedFinancial] = useState(null);
 
-    render();
+      const profit = Math.max(0, Number(profitInput) || 0);
+      const carryPct = Math.min(100, Math.max(0, Number(carryInput) || 0));
+
+      const results = useMemo(() => calcSplit(profit, carryPct, scenario), [profit, carryPct, scenario]);
+
+      const handleDownload = useCallback(() => {
+        const rows = [
+          ['Party','Amount','Profit','Carry_%','Scenario','W_Founders','W_Laura','W_Damon'],
+          ['Founders (Yoni+Spence)', results.founders.toFixed(2), profit.toFixed(2), carryPct, scenario, (results.weights.F * 100).toFixed(4) + '%', (results.weights.L * 100).toFixed(4) + '%', (results.weights.D * 100).toFixed(4) + '%'],
+          ['Laura', results.laura.toFixed(2), profit.toFixed(2), carryPct, scenario, '', '', ''],
+          ['Damon', results.damon.toFixed(2), profit.toFixed(2), carryPct, scenario, '', '', '']
+        ];
+        const csv = rows.map(row => row.join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'profit_split_founders_laura_damon.csv';
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, [results, profit, carryPct, scenario]);
+
+      const handlePrefill = useCallback((parsed) => {
+        if (!parsed) return;
+        if (parsed.profitCandidate != null && !Number.isNaN(parsed.profitCandidate)) {
+          setProfitInput(formatNumberForInput(parsed.profitCandidate));
+        }
+        setParsedFinancial(parsed);
+      }, []);
+
+      return (
+        <div>
+          <h1>Interactive Profit Split — Founders (Yoni+Spence), Laura, Damon</h1>
+          <div className="muted">Based on capital‑days and a 20% carry on Laura &amp; Damon profits (carry goes to Founders). Damon can be toggled as deployed or not.</div>
+          <div className="controls">
+            <div className="control">
+              <label htmlFor="profitInput">Profit (P)</label>
+              <input
+                id="profitInput"
+                type="number"
+                step="1"
+                min="0"
+                value={profitInput}
+                onChange={(event) => setProfitInput(event.target.value)}
+              />
+            </div>
+            <div className="control">
+              <label htmlFor="carryInput">Carry on Laura &amp; Damon (%)</label>
+              <input
+                id="carryInput"
+                type="number"
+                step="1"
+                min="0"
+                max="100"
+                value={carryInput}
+                onChange={(event) => setCarryInput(event.target.value)}
+              />
+            </div>
+            <div className="control">
+              <label htmlFor="scenario">Damon status</label>
+              <select id="scenario" value={scenario} onChange={(event) => setScenario(event.target.value)}>
+                <option value="notdeployed">Not deployed (0 weight)</option>
+                <option value="deployed">Deployed on 2025‑08‑02 (5,000 capital)</option>
+              </select>
+              <div className="weights muted" id="weightsInfo">
+                Weights → Founders: {pct(results.weights.F)}, Laura: {pct(results.weights.L)}, Damon: {pct(results.weights.D)} (sum {( (results.weights.F + results.weights.L + results.weights.D) * 100 ).toFixed(2)}%)
+              </div>
+            </div>
+            <div className="control">
+              <label>&nbsp;</label>
+              <div className="inline">
+                <button type="button" onClick={() => { /* values recalc automatically */ }}>Recalculate</button>
+                <button type="button" onClick={handleDownload}>Download CSV</button>
+              </div>
+            </div>
+            <div className="control">
+              <label>Screenshot upload</label>
+              <UploadPanel onPrefill={handlePrefill} currencySymbol={parsedFinancial?.currencySymbol} />
+            </div>
+          </div>
+          <div className="bars" id="bars">
+            <BarRow label="Founders (Yoni+Spence)" value={results.founders} className="founders" total={results.total} currencySymbol={parsedFinancial?.currencySymbol || '$'} />
+            <BarRow label="Laura" value={results.laura} className="laura" total={results.total} currencySymbol={parsedFinancial?.currencySymbol || '$'} />
+            <BarRow label="Damon" value={results.damon} className="damon" total={results.total} currencySymbol={parsedFinancial?.currencySymbol || '$'} />
+          </div>
+          <StackedBar founders={results.founders} laura={results.laura} damon={results.damon} total={results.total} currencySymbol={parsedFinancial?.currencySymbol || '$'} />
+          <div style={{ marginTop: '18px' }} className="muted">
+            <div>Formulas (P = profit, c = carry as decimal):</div>
+            <div>Founders = P*W<sub>F</sub> + c*P*(W<sub>L</sub> + W<sub>D</sub>)</div>
+            <div>Laura = (1 − c)*P*W<sub>L</sub></div>
+            <div>Damon = (1 − c)*P*W<sub>D</sub></div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = document.getElementById('root');
+    if (root) {
+      const app = ReactDOM.createRoot(root);
+      app.render(<App />);
+    }
   </script>
 </body>
 </html>
