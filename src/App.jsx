@@ -162,13 +162,15 @@ const parseLabeledNumber = (text, labels) => {
           scopedText = scopedText.slice(separatorIndex + 1)
         }
 
-        const scopedMatches = Array.from(scopedText.matchAll(new RegExp(numericTokenRegex.source, 'g')))
+        const scopedMatches = Array.from(
+          scopedText.matchAll(new RegExp(numericTokenRegex.source, 'g')),
+        )
         if (scopedMatches.length > 0) {
           const prioritizedMatch = scopedMatches.find((match) => {
             const token = match[1].trim()
             return /[$,.]/.test(token) || /[kKmM]$/i.test(token) || token.startsWith('+') || token.startsWith('-')
           })
-          const chosenMatch = prioritizedMatch ?? scopedMatches[scopedMatches.length - 1]
+          const chosenMatch = prioritizedMatch ?? scopedMatches[0]
           const normalized = normalizeMagnitude(chosenMatch[1])
           if (normalized) return normalized
         }
