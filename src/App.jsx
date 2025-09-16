@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import Tesseract from 'tesseract.js'
+import { runOcr, parseMetrics, sanitizeParsedMetrics, initialAdvancedInputs } from './lib/ocr'
 import './App.css'
-import { clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr.js'
 
 const WEIGHTS = {
   notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
@@ -61,6 +60,17 @@ const ADVANCED_CLASSES = [
   },
 ]
 
+const initialAdvancedInputs = {
+  walletSize: '',
+  pnl: '',
+  unrealizedPnl: '',
+  totalTrades: '',
+  winTrades: '',
+  lossTrades: '',
+  date: '',
+  carry: '',
+}
+
 const initialWeightInputs = {
   founder: '50',
   investor: '35',
@@ -83,6 +93,8 @@ const percentFormatter = new Intl.NumberFormat('en-US', {
 const integerFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 })
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
 const formatCurrency = (value) => currencyFormatter.format(value)
 const formatPercent = (value) => percentFormatter.format(value)
@@ -519,13 +531,13 @@ function App() {
 
   const advancedNumbers = useMemo(
     () => ({
-      walletSize: Number(advancedInputs.walletSize) || 0,
-      pnl: Number(advancedInputs.pnl) || 0,
-      unrealizedPnl: Number(advancedInputs.unrealizedPnl) || 0,
-      totalTrades: Number(advancedInputs.totalTrades) || 0,
-      winTrades: Number(advancedInputs.winTrades) || 0,
-      lossTrades: Number(advancedInputs.lossTrades) || 0,
-      carry: Number(advancedInputs.carry) || 0,
+      walletSize: toNumber(advancedInputs.walletSize),
+      pnl: toNumber(advancedInputs.pnl),
+      unrealizedPnl: toNumber(advancedInputs.unrealizedPnl),
+      totalTrades: toNumber(advancedInputs.totalTrades),
+      winTrades: toNumber(advancedInputs.winTrades),
+      lossTrades: toNumber(advancedInputs.lossTrades),
+      carry: clamp(toNumber(advancedInputs.carry), 0, 100),
     }),
     [advancedInputs],
   )
@@ -580,30 +592,58 @@ function App() {
     setOcrText('')
 
     try {
-      const result = await Tesseract.recognize(file, 'eng', {
-        logger: (message) => {
-          if (message.status === 'recognizing text') {
-            setOcrProgress(Math.round((message.progress || 0) * 100))
+      const text = await runOcr(file, {
+        onProgress: (progress) => {
+          if (typeof progress === 'number') {
+            setOcrProgress(Math.round(progress * 100))
           }
         },
       })
 
-      const text = result.data.text ?? ''
       setOcrText(text)
-      const extracted = parseMetrics(text)
-      const mergedAdvancedInputs = sanitizeParsedMetrics(advancedInputs, extracted)
-      setAdvancedInputs(mergedAdvancedInputs)
+      const metrics = parseMetrics(text)
 
-      if (mergedAdvancedInputs.pnl) {
-        const pnlValue = Math.max(0, Number(mergedAdvancedInputs.pnl) || 0)
+      setAdvancedInputs((previous) => {
+        const next = { ...previous }
+        if (metrics.walletSize != null) {
+          next.walletSize = String(metrics.walletSize)
+        }
+        if (metrics.pnl != null) {
+          next.pnl = String(metrics.pnl)
+        }
+        if (metrics.unrealizedPnl != null) {
+          next.unrealizedPnl = String(metrics.unrealizedPnl)
+        }
+        if (metrics.totalTrades != null) {
+          next.totalTrades = String(metrics.totalTrades)
+        }
+        if (metrics.winTrades != null) {
+          next.winTrades = String(metrics.winTrades)
+        }
+        if (metrics.lossTrades != null) {
+          next.lossTrades = String(metrics.lossTrades)
+        }
+        if (metrics.date) {
+          next.date = metrics.date
+        }
+        if (metrics.carry != null) {
+          const carryValue = clamp(metrics.carry, 0, 100)
+          next.carry = String(carryValue)
+        }
+        return next
+      })
+
+      if (metrics.pnl != null) {
+        const pnlValue = Math.max(0, metrics.pnl)
         setProfitInput(String(pnlValue))
       }
 
-      if (mergedAdvancedInputs.carry) {
-        const carryValue = clamp(Number(mergedAdvancedInputs.carry) || 0, 0, 100)
+      if (metrics.carry != null) {
+        const carryValue = clamp(metrics.carry, 0, 100)
         setCarryInput(String(carryValue))
       }
 
+      setOcrProgress(100)
       setOcrStatus('done')
     } catch (error) {
       setOcrStatus('error')
