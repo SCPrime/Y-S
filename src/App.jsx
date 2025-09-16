@@ -151,11 +151,29 @@ const parseLabeledNumber = (text, labels) => {
       if (!currentLower.includes(labelLower)) {
         continue
       }
-      const inlineMatch = current.match(numericTokenRegex)
-      if (inlineMatch?.[1]) {
-        const normalized = normalizeMagnitude(inlineMatch[1])
-        if (normalized) return normalized
+
+      const labelIndex = currentLower.indexOf(labelLower)
+      const afterLabel = labelIndex >= 0 ? current.slice(labelIndex + labelLower.length) : ''
+
+      if (afterLabel) {
+        let scopedText = afterLabel
+        const separatorIndex = scopedText.search(/[:=]/)
+        if (separatorIndex >= 0) {
+          scopedText = scopedText.slice(separatorIndex + 1)
+        }
+
+        const scopedMatches = Array.from(scopedText.matchAll(new RegExp(numericTokenRegex.source, 'g')))
+        if (scopedMatches.length > 0) {
+          const prioritizedMatch = scopedMatches.find((match) => {
+            const token = match[1].trim()
+            return /[$,.]/.test(token) || /[kKmM]$/i.test(token) || token.startsWith('+') || token.startsWith('-')
+          })
+          const chosenMatch = prioritizedMatch ?? scopedMatches[scopedMatches.length - 1]
+          const normalized = normalizeMagnitude(chosenMatch[1])
+          if (normalized) return normalized
+        }
       }
+
       const nextLine = lines[index + 1]
       if (nextLine) {
         const nextMatch = nextLine.match(numericTokenRegex)
@@ -163,6 +181,12 @@ const parseLabeledNumber = (text, labels) => {
           const normalized = normalizeMagnitude(nextMatch[1])
           if (normalized) return normalized
         }
+      }
+
+      const inlineFallback = current.match(numericTokenRegex)
+      if (inlineFallback?.[1]) {
+        const normalized = normalizeMagnitude(inlineFallback[1])
+        if (normalized) return normalized
       }
     }
   }
