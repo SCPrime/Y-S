@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Tesseract from 'tesseract.js'
 import './App.css'
+import { llmOcrTextExtract, llmVisionExtractFromImage } from './lib/ai'
 
 const WEIGHTS = {
   notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
@@ -587,6 +588,15 @@ function App() {
   const [aiStatus, setAiStatus] = useState('idle')
   const [aiError, setAiError] = useState('')
   const [aiReport, setAiReport] = useState('')
+  const [useAiVision, setUseAiVision] = useState(false)
+  const [useAiExtraction, setUseAiExtraction] = useState(false)
+
+  const aiConfig = useMemo(() => {
+    const apiKey = aiKey.trim()
+    const baseUrl = aiBaseUrl.trim().replace(/\/+$/, '')
+    const model = aiModel.trim()
+    return { apiKey, baseUrl, model }
+  }, [aiKey, aiBaseUrl, aiModel])
 
   useEffect(() => () => {
     if (uploadedImage && typeof URL !== 'undefined') {
@@ -743,6 +753,160 @@ function App() {
   const profitPerTrade = advancedNumbers.totalTrades > 0 ? advancedNumbers.pnl / advancedNumbers.totalTrades : 0
   const roi = advancedNumbers.walletSize > 0 ? combinedProfit / advancedNumbers.walletSize : 0
 
+  const mapAiResultToExtraction = (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      return { advanced: {} }
+    }
+
+    const pick = (...candidates) => {
+      for (const candidate of candidates) {
+        if (candidate === undefined || candidate === null) {
+          continue
+        }
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+          return String(candidate)
+        }
+        if (typeof candidate === 'string') {
+          const trimmed = candidate.trim()
+          if (trimmed) {
+            return trimmed
+          }
+        }
+      }
+      return ''
+    }
+
+    const advanced = {}
+    const walletSize = pick(payload.walletSize, payload.wallet_balance, payload.balance, payload.wallet_size)
+    if (walletSize !== '') {
+      advanced.walletSize = walletSize
+    }
+    const realizedPnl = pick(
+      payload.realizedPnl,
+      payload.realized_pnl,
+      payload.realizedProfit,
+      payload.realized_profit,
+      payload.pnl,
+    )
+    if (realizedPnl !== '') {
+      advanced.pnl = realizedPnl
+    }
+    const unrealizedPnl = pick(
+      payload.unrealizedPnl,
+      payload.unrealized_pnl,
+      payload.unrealizedProfit,
+      payload.unrealized_profit,
+    )
+    if (unrealizedPnl !== '') {
+      advanced.unrealizedPnl = unrealizedPnl
+    }
+    const totalTrades = pick(payload.totalTrades, payload.total_trades, payload.tradeCount, payload.tradesTotal)
+    if (totalTrades !== '') {
+      advanced.totalTrades = totalTrades
+    }
+    const winTrades = pick(payload.winTrades, payload.win_trades, payload.winningTrades, payload.wins)
+    if (winTrades !== '') {
+      advanced.winTrades = winTrades
+    }
+    const lossTrades = pick(payload.lossTrades, payload.loss_trades, payload.losingTrades, payload.losses)
+    if (lossTrades !== '') {
+      advanced.lossTrades = lossTrades
+    }
+    const snapshotDate = pick(payload.snapshotDate, payload.snapshot_date, payload.date, payload.reportDate)
+    if (snapshotDate !== '') {
+      advanced.date = snapshotDate
+    }
+    const extraction = { advanced }
+    const carryValue = pick(
+      payload.carryPercent,
+      payload.carry_percent,
+      payload.carry_percentage,
+      payload.carryPercentDecimal,
+      payload.carry,
+    )
+    if (carryValue !== '') {
+      extraction.carry = carryValue
+    }
+
+    const profitValue =
+      realizedPnl !== '' ? realizedPnl : pick(payload.profit, payload.profitInput, payload.realized_profit)
+    if (profitValue !== '') {
+      extraction.profit = profitValue
+    }
+
+    return extraction
+  }
+
+  const applyExtractionResult = (extraction) => {
+    if (!extraction) {
+      return
+    }
+
+    const { advanced: advancedUpdates = {}, profit, carry } = extraction
+    const sanitizedAdvanced = {}
+    let sanitizedCarry = ''
+
+    Object.entries(advancedUpdates).forEach(([key, rawValue]) => {
+      if (rawValue === undefined || rawValue === null) {
+        return
+      }
+
+      if (key === 'carry') {
+        const numeric = Number(rawValue)
+        if (!Number.isNaN(numeric)) {
+          const clamped = clamp(numeric, 0, 100)
+          sanitizedCarry = String(clamped)
+          sanitizedAdvanced.carry = sanitizedCarry
+        }
+        return
+      }
+
+      const valueString =
+        typeof rawValue === 'number' && Number.isFinite(rawValue)
+          ? String(rawValue)
+          : String(rawValue).trim()
+      if (valueString !== '') {
+        sanitizedAdvanced[key] = valueString
+      }
+    })
+
+    if (!sanitizedCarry && carry !== undefined && carry !== null && carry !== '') {
+      const numeric = Number(carry)
+      if (!Number.isNaN(numeric)) {
+        const clamped = clamp(numeric, 0, 100)
+        sanitizedCarry = String(clamped)
+        sanitizedAdvanced.carry = sanitizedCarry
+      }
+    }
+
+    if (Object.keys(sanitizedAdvanced).length > 0) {
+      setAdvancedInputs((previous) => {
+        const next = { ...previous }
+        Object.entries(sanitizedAdvanced).forEach(([key, value]) => {
+          next[key] = value
+        })
+        return next
+      })
+    }
+
+    const profitSource =
+      profit !== undefined && profit !== null && profit !== ''
+        ? profit
+        : sanitizedAdvanced.pnl
+
+    if (profitSource !== undefined && profitSource !== null && profitSource !== '') {
+      const numeric = Number(profitSource)
+      if (!Number.isNaN(numeric)) {
+        const normalized = Math.max(0, numeric)
+        setProfitInput(String(normalized))
+      }
+    }
+
+    if (sanitizedCarry) {
+      setCarryInput(sanitizedCarry)
+    }
+  }
+
   const handleOcrUpload = async (event) => {
     const inputElement = event.target
     const file = inputElement.files?.[0]
@@ -762,7 +926,32 @@ function App() {
     setOcrError('')
     setOcrText('')
 
+    const errorMessages = []
+
     try {
+      if (useAiVision) {
+        if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
+          errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
+        } else {
+          try {
+            const visionExtraction = await llmVisionExtractFromImage(file, aiConfig)
+            const mappedVision = mapAiResultToExtraction(visionExtraction)
+            applyExtractionResult(mappedVision)
+            if (errorMessages.length > 0) {
+              setOcrError(errorMessages.join(' '))
+              setOcrStatus('error')
+            } else {
+              setOcrStatus('done')
+            }
+            return
+          } catch (visionError) {
+            const message =
+              visionError instanceof Error ? visionError.message : 'Vision extraction failed.'
+            errorMessages.push(`${message} Falling back to on-device OCR.`)
+          }
+        }
+      }
+
       const result = await Tesseract.recognize(file, 'eng', {
         logger: (message) => {
           if (message.status === 'recognizing text') {
@@ -772,28 +961,39 @@ function App() {
       })
 
       const text = result.data.text ?? ''
-      setOcrText(text)
-      const extracted = extractAdvancedFields(text)
-      setAdvancedInputs((previous) => {
-        const next = { ...previous }
-        Object.entries(extracted).forEach(([key, value]) => {
-          if (value !== '') {
-            next[key] = value
+      if (text.trim()) {
+        setOcrText(text)
+      }
+
+      const heuristicExtraction = extractAdvancedFields(text)
+      applyExtractionResult({ advanced: heuristicExtraction })
+
+      if (useAiExtraction) {
+        if (!text.trim()) {
+          errorMessages.push('AI extraction skipped because no OCR text was recognized.')
+        } else if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
+          errorMessages.push('AI extraction requires a valid API key, base URL, and model.')
+        } else {
+          try {
+            const aiExtraction = await llmOcrTextExtract(text, aiConfig)
+            const mappedAi = mapAiResultToExtraction(aiExtraction)
+            applyExtractionResult(mappedAi)
+          } catch (aiErrorInstance) {
+            const message =
+              aiErrorInstance instanceof Error
+                ? aiErrorInstance.message
+                : 'AI extraction failed.'
+            errorMessages.push(`${message} Showing heuristic OCR results.`)
           }
-        })
-        return next
-      })
-
-      if (extracted.pnl) {
-        const pnlValue = Math.max(0, Number(extracted.pnl) || 0)
-        setProfitInput(String(pnlValue))
+        }
       }
 
-      if (extracted.carry) {
-        setCarryInput(extracted.carry)
+      if (errorMessages.length > 0) {
+        setOcrError(errorMessages.join(' '))
+        setOcrStatus('error')
+      } else {
+        setOcrStatus('done')
       }
-
-      setOcrStatus('done')
     } catch (error) {
       setOcrStatus('error')
       setOcrError(error instanceof Error ? error.message : 'Failed to process the screenshot')
@@ -828,12 +1028,17 @@ function App() {
   }
 
   const handleGenerateReport = async () => {
-    if (!aiKey) {
+    if (!aiConfig.apiKey) {
       setAiError('An API key is required to generate the executive report.')
       return
     }
 
-    const endpoint = buildCompletionsUrl(aiBaseUrl)
+    if (!aiConfig.model) {
+      setAiError('Provide a valid model for the AI provider.')
+      return
+    }
+
+    const endpoint = buildCompletionsUrl(aiConfig.baseUrl)
     if (!endpoint) {
       setAiError('Provide a valid base URL for the AI provider.')
       return
@@ -872,7 +1077,7 @@ function App() {
     }
 
     const payload = {
-      model: aiModel,
+      model: aiConfig.model,
       messages: [
         {
           role: 'system',
@@ -902,7 +1107,7 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${aiKey}`,
+          Authorization: `Bearer ${aiConfig.apiKey}`,
         },
         body: JSON.stringify(payload),
       })
@@ -1161,6 +1366,34 @@ function App() {
               Drop a Figment dashboard screenshot to automatically extract wallet size, PnL, trade counts, and carry. All OCR runs in the
               browser via Tesseract.js.
             </p>
+            <div className="ai-options" role="group" aria-label="AI extraction options">
+              <label className="ai-toggle">
+                <input
+                  type="checkbox"
+                  checked={useAiVision}
+                  onChange={(event) => setUseAiVision(event.target.checked)}
+                />
+                <span>
+                  <strong>Use AI vision extraction</strong>
+                  <span className="muted">
+                    Skip on-device OCR and let your BYOK model extract structured values directly from the screenshot.
+                  </span>
+                </span>
+              </label>
+              <label className="ai-toggle">
+                <input
+                  type="checkbox"
+                  checked={useAiExtraction}
+                  onChange={(event) => setUseAiExtraction(event.target.checked)}
+                />
+                <span>
+                  <strong>Enhance OCR with AI JSON mode</strong>
+                  <span className="muted">
+                    Run Tesseract locally, then merge any non-null fields returned by your BYOK chat model.
+                  </span>
+                </span>
+              </label>
+            </div>
             <label className={`upload-zone ${ocrStatus === 'processing' ? 'uploading' : ''}`}>
               <input type="file" accept="image/*" onChange={handleOcrUpload} />
               <span>
