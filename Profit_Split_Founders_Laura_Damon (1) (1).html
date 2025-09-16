@@ -32,11 +32,25 @@
     .inline { display: inline-flex; gap: 10px; align-items: center; }
     button { padding: 8px 12px; font-size: var(--font); cursor: pointer; }
     .weights { margin-top: 4px; font-size: 12px; }
+
+    .upload-card { margin: 24px 0; padding: 16px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; }
+    .upload-card h2 { margin: 0 0 10px; font-size: 16px; }
+    .upload-card p { margin: 6px 0; font-size: 13px; color: #444; }
+    .upload-card input[type="file"] { font-size: 13px; }
+    .upload-card .status { margin-top: 12px; font-size: 13px; color: #444; white-space: pre-wrap; }
+    .upload-card .status.error { color: #b00020; }
+    .parsed-fields { margin-top: 12px; font-size: 13px; }
+    .parsed-fields dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; }
+    .parsed-fields dt { font-weight: 600; }
+    .parsed-fields dd { margin: 0; font-variant-numeric: tabular-nums; }
+    .parsed-fields .hint { grid-column: 1 / -1; color: #666; font-size: 12px; }
+    .raw-text { margin-top: 12px; background: #fff; border: 1px dashed #ccc; border-radius: 6px; padding: 12px; font-size: 12px; white-space: pre-wrap; max-height: 220px; overflow: auto; }
   </style>
 </head>
 <body>
   <h1>Interactive Profit Split — Founders (Yoni+Spence), Laura, Damon</h1>
   <div class="muted">Based on capital‑days and a 20% carry on Laura & Damon profits (carry goes to Founders). Damon can be toggled as deployed or not.</div>
+  <div id="upload-root"></div>
   <div class="controls">
     <div class="control">
       <label for="profitInput">Profit (P)</label>
@@ -209,5 +223,491 @@
 
     render();
   </script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+    const { useCallback, useMemo, useState } = React;
+
+    const DEFAULT_OCR_ENDPOINT = window.OCR_UPLOAD_ENDPOINT || '/api/ocr';
+    const DEFAULT_OCR_HEADERS = window.OCR_UPLOAD_HEADERS || null;
+    const PNL_REGEX = /(?:p\s*(?:&|and|n)?\s*l|pnl)/i;
+    const MONEY_CAPTURE_REGEX = /(-?\(?\$?\d[\d,]*(?:\.\d+)?\)?)/;
+    const PERCENT_CAPTURE_REGEX = /(-?\d+(?:\.\d+)?)\s*%/;
+
+    const FIELD_PATTERNS = [
+      { key: 'totalValue', type: 'money', labels: [/total\s+(?:account\s+)?value/i, /net\s+liq(?:uidity)?/i, /portfolio\s+value/i, /account\s+value/i] },
+      { key: 'cash', type: 'money', labels: [/cash\s*(?:balance)?/i, /available\s+cash/i] },
+      { key: 'buyingPower', type: 'money', labels: [/buying\s+power/i] },
+      { key: 'netDeposits', type: 'money', labels: [/net\s+deposits?/i] },
+      { key: 'unrealizedPnl', type: 'money', labels: [new RegExp(`unreal(?:ized|ised)\\s*${PNL_REGEX.source}`, 'i'), /unreal(?:ized|ised)\s+gain/i, /floating\s+pnl/i] },
+      { key: 'realizedPnl', type: 'money', labels: [new RegExp(`real(?:ized|ised)\\s*${PNL_REGEX.source}`, 'i'), /real(?:ized|ised)\s+gain/i] },
+      { key: 'dailyPnl', type: 'money', labels: [new RegExp(`(?:today'?s|day|daily)\\s*${PNL_REGEX.source}`, 'i')] },
+      { key: 'netProfit', type: 'money', labels: [/net\s+profit/i, new RegExp(`net\\s*${PNL_REGEX.source}`, 'i')] },
+      { key: 'totalProfit', type: 'money', labels: [/total\s+profit/i, new RegExp(`total\\s*${PNL_REGEX.source}`, 'i'), /overall\s+profit/i, /pnl\s+total/i] },
+      { key: 'profit', type: 'money', labels: [/profit\b/i] },
+      { key: 'carryPercent', type: 'percent', labels: [/carry\b/i, /carry\s*percentage/i] }
+    ];
+
+    const FIELD_LABELS = {
+      totalValue: 'Total Value',
+      unrealizedPnl: 'Unrealized P&L',
+      realizedPnl: 'Realized P&L',
+      dailyPnl: "Today's P&L",
+      netProfit: 'Net Profit',
+      totalProfit: 'Total P&L',
+      profit: 'Profit',
+      carryPercent: 'Carry (%)',
+      netDeposits: 'Net Deposits',
+      cash: 'Cash',
+      buyingPower: 'Buying Power',
+      derivedProfit: 'Derived Profit (applied to Profit input)'
+    };
+
+    const DISPLAY_ORDER = ['totalValue', 'cash', 'buyingPower', 'netDeposits', 'unrealizedPnl', 'realizedPnl', 'dailyPnl', 'netProfit', 'totalProfit', 'profit', 'carryPercent', 'derivedProfit'];
+
+    const currencyFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+
+    const isValidNumber = (value) => typeof value === 'number' && !Number.isNaN(value);
+
+    function parseMoney(value) {
+      if (value == null) return null;
+      if (typeof value === 'number' && !Number.isNaN(value)) return value;
+      if (typeof value !== 'string') return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      let negative = false;
+      let cleaned = trimmed;
+      if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
+        negative = true;
+        cleaned = cleaned.slice(1, -1);
+      }
+      if (/^[-\d,.\$]+-$/.test(cleaned)) {
+        negative = true;
+        cleaned = cleaned.replace(/-$/, '');
+      }
+      cleaned = cleaned.replace(/[^0-9.,-]/g, '');
+      if (!cleaned) return null;
+      cleaned = cleaned.replace(/,/g, '');
+      const parsed = parseFloat(cleaned);
+      if (Number.isNaN(parsed)) return null;
+      return negative || /^-/.test(trimmed) ? -Math.abs(parsed) : parsed;
+    }
+
+    function parsePercent(value) {
+      if (value == null) return null;
+      if (typeof value === 'number' && !Number.isNaN(value)) return value;
+      if (typeof value !== 'string') return null;
+      const match = value.match(/-?\d+(?:\.\d+)?/);
+      if (!match) return null;
+      const parsed = parseFloat(match[0]);
+      return Number.isNaN(parsed) ? null : parsed;
+    }
+
+    function captureValueFromLines(lines, index, type) {
+      const limit = Math.min(lines.length, index + 3);
+      for (let i = index; i < limit; i += 1) {
+        const line = lines[i];
+        const regex = type === 'percent' ? PERCENT_CAPTURE_REGEX : MONEY_CAPTURE_REGEX;
+        const match = line.match(regex);
+        if (match) {
+          return type === 'percent' ? parsePercent(match[1]) : parseMoney(match[1]);
+        }
+      }
+      return null;
+    }
+
+    function extractFinancialFields(text) {
+      if (!text) return {};
+      const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (!lines.length) return {};
+      const result = {};
+
+      FIELD_PATTERNS.forEach((pattern) => {
+        if (result[pattern.key] != null) return;
+        for (let i = 0; i < lines.length; i += 1) {
+          const line = lines[i];
+          if (!line) continue;
+          const matched = pattern.labels.some((regex) => regex.test(line));
+          if (!matched) continue;
+          const value = captureValueFromLines(lines, i, pattern.type);
+          if (value != null && !Number.isNaN(value)) {
+            result[pattern.key] = value;
+            break;
+          }
+        }
+      });
+
+      return result;
+    }
+
+    function extractFieldsFromJson(data) {
+      if (!data || typeof data !== 'object') return {};
+      const result = {};
+      const stack = [data];
+      const visited = new Set();
+
+      while (stack.length) {
+        const node = stack.pop();
+        if (!node || typeof node !== 'object' || visited.has(node)) continue;
+        visited.add(node);
+
+        if (Array.isArray(node)) {
+          node.forEach((entry) => stack.push(entry));
+          continue;
+        }
+
+        Object.entries(node).forEach(([key, value]) => {
+          if (value && typeof value === 'object') {
+            stack.push(value);
+            return;
+          }
+
+          if (value == null) return;
+          const normalizedKey = key.toLowerCase();
+          const assignMoney = (targetKey) => {
+            if (result[targetKey] != null) return;
+            const parsed = parseMoney(value);
+            if (parsed != null) {
+              result[targetKey] = parsed;
+            }
+          };
+
+          if (/(?:total|account|portfolio)[ _-]*value/.test(normalizedKey) || /net[ _-]*liq/.test(normalizedKey)) {
+            assignMoney('totalValue');
+          }
+
+          if (/(?:unreal|floating)[ _-]*(?:pnl|pl|p&l|gain|loss)/.test(normalizedKey)) {
+            assignMoney('unrealizedPnl');
+          }
+
+          if (/(?:realiz|realised)[ _-]*(?:pnl|pl|p&l|gain|loss)/.test(normalizedKey)) {
+            assignMoney('realizedPnl');
+          }
+
+          if (/(?:day|today|daily)[ _-]*(?:pnl|pl|p&l)/.test(normalizedKey)) {
+            assignMoney('dailyPnl');
+          }
+
+          if (/(?:net|total)[ _-]*(?:profit|pnl|pl|p&l)/.test(normalizedKey)) {
+            assignMoney(normalizedKey.includes('net') ? 'netProfit' : 'totalProfit');
+          }
+
+          if (/(?:profit)/.test(normalizedKey)) {
+            assignMoney('profit');
+          }
+
+          if (/carry/.test(normalizedKey) || /performance\s*fee/.test(normalizedKey)) {
+            if (result.carryPercent == null) {
+              const parsed = parsePercent(value);
+              if (parsed != null) {
+                result.carryPercent = parsed;
+              }
+            }
+          }
+
+          if (/cash/.test(normalizedKey)) {
+            assignMoney('cash');
+          }
+
+          if (/buying[ _-]*power/.test(normalizedKey)) {
+            assignMoney('buyingPower');
+          }
+
+          if (/net[ _-]*deposits?/.test(normalizedKey)) {
+            assignMoney('netDeposits');
+          }
+        });
+      }
+
+      return result;
+    }
+
+    function extractTextFromResponse(data) {
+      if (!data) return '';
+      if (typeof data === 'string') return data;
+      if (typeof data.text === 'string') return data.text;
+      if (Array.isArray(data)) {
+        return data.map((entry) => extractTextFromResponse(entry)).filter(Boolean).join('\n');
+      }
+      if (Array.isArray(data.responses) && data.responses.length) {
+        const response = data.responses[0];
+        if (response?.fullTextAnnotation?.text) return response.fullTextAnnotation.text;
+        if (Array.isArray(response?.textAnnotations) && response.textAnnotations.length) {
+          return response.textAnnotations.map((item) => item.description || '').join('\n');
+        }
+      }
+      if (data.result?.text) return data.result.text;
+      if (Array.isArray(data.results) && data.results[0]?.text) return data.results[0].text;
+      if (typeof data.description === 'string') return data.description;
+      if (typeof data.message === 'string') return data.message;
+      if (typeof data.content === 'string') return data.content;
+      if (Array.isArray(data.choices) && data.choices.length) {
+        const choice = data.choices[0];
+        const content = choice?.message?.content ?? choice?.text;
+        if (Array.isArray(content)) {
+          return content
+            .map((item) => {
+              if (typeof item === 'string') return item;
+              if (item && typeof item.text === 'string') return item.text;
+              return '';
+            })
+            .filter(Boolean)
+            .join('\n');
+        }
+        if (typeof content === 'string') return content;
+      }
+      if (data.data && Array.isArray(data.data) && data.data[0]?.text) return data.data[0].text;
+      if (data.output?.text) return data.output.text;
+      if (data.raw_text) return data.raw_text;
+      try {
+        return JSON.stringify(data);
+      } catch (err) {
+        return '';
+      }
+    }
+
+    function computeDerivedProfit(fields) {
+      if (!fields) return null;
+      const profitKeys = ['profit', 'netProfit', 'totalProfit'];
+      for (const key of profitKeys) {
+        if (isValidNumber(fields[key])) {
+          return fields[key];
+        }
+      }
+      const realized = isValidNumber(fields?.realizedPnl) ? fields.realizedPnl : null;
+      const unrealized = isValidNumber(fields?.unrealizedPnl) ? fields.unrealizedPnl : null;
+      if (realized != null || unrealized != null) {
+        return (realized || 0) + (unrealized || 0);
+      }
+      return null;
+    }
+
+    function determineProfitInputValue(fields) {
+      if (!fields) return null;
+      const keys = ['profit', 'netProfit', 'totalProfit', 'derivedProfit', 'totalValue'];
+      for (const key of keys) {
+        if (isValidNumber(fields[key])) {
+          return fields[key];
+        }
+      }
+      return null;
+    }
+
+    function determineCarryValue(fields) {
+      if (!fields) return null;
+      const candidates = [fields.carryPercent, fields.carry];
+      for (const candidate of candidates) {
+        if (isValidNumber(candidate)) {
+          return candidate;
+        }
+      }
+      return null;
+    }
+
+    function applyExtractedToCalculator(fields) {
+      if (!fields) return;
+      const profitInput = document.getElementById('profitInput');
+      const carryInput = document.getElementById('carryInput');
+
+      const profitValue = determineProfitInputValue(fields);
+      if (profitInput && isValidNumber(profitValue)) {
+        profitInput.value = profitValue;
+        profitInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      const carryValue = determineCarryValue(fields);
+      if (carryInput && isValidNumber(carryValue)) {
+        carryInput.value = carryValue;
+        carryInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      if (typeof window.render === 'function') {
+        window.render();
+      }
+    }
+
+    async function sendImageToOcr(file, endpoint) {
+      if (!endpoint) {
+        throw new Error('OCR endpoint is not configured. Set window.OCR_UPLOAD_ENDPOINT to the server URL.');
+      }
+
+      if (typeof window.buildOcrRequest === 'function') {
+        return window.buildOcrRequest(file, { endpoint });
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const headers = DEFAULT_OCR_HEADERS && typeof DEFAULT_OCR_HEADERS === 'object' ? DEFAULT_OCR_HEADERS : undefined;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+        headers
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`OCR request failed (${response.status}): ${errorText || response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        return response.json();
+      }
+
+      const text = await response.text();
+      if (!text) return {};
+      try {
+        return JSON.parse(text);
+      } catch (err) {
+        return { text };
+      }
+    }
+
+    function formatDisplayValue(key, value) {
+      if (!isValidNumber(value)) return '';
+      if (key && key.toLowerCase().includes('percent')) {
+        return `${value.toFixed(2)}%`;
+      }
+      return currencyFormatter.format(value);
+    }
+
+    function OcrUpload({ endpoint = DEFAULT_OCR_ENDPOINT }) {
+      const [uploading, setUploading] = useState(false);
+      const [status, setStatus] = useState('');
+      const [error, setError] = useState('');
+      const [fields, setFields] = useState(null);
+      const [rawText, setRawText] = useState('');
+      const [timestamp, setTimestamp] = useState(null);
+
+      const handleFileChange = useCallback(async (event) => {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+        event.target.value = '';
+
+        if (!file.type.startsWith('image/')) {
+          setError('Please upload an image file (PNG, JPG, HEIC, etc.).');
+          setStatus('');
+          return;
+        }
+
+        setUploading(true);
+        setError('');
+        setStatus('Uploading image to OCR service…');
+
+        try {
+          const responseData = window.mockOcrResponse
+            ? (typeof window.mockOcrResponse === 'function' ? await window.mockOcrResponse(file) : window.mockOcrResponse)
+            : await sendImageToOcr(file, endpoint);
+
+          setStatus('Parsing OCR response…');
+
+          const text = extractTextFromResponse(responseData);
+          const textFields = extractFinancialFields(text);
+          const jsonFields = extractFieldsFromJson(responseData);
+          const combined = { ...textFields, ...jsonFields };
+
+          if (responseData && typeof responseData === 'object' && responseData.fields) {
+            Object.assign(combined, extractFieldsFromJson(responseData.fields));
+          }
+
+          const derivedProfit = computeDerivedProfit(combined);
+          if (derivedProfit != null) {
+            combined.derivedProfit = derivedProfit;
+          }
+
+          const normalized = { ...combined };
+          applyExtractedToCalculator(normalized);
+
+          if (Object.keys(normalized).length === 0) {
+            setStatus('OCR completed but no financial amounts were detected. Inspect the raw text below.');
+          } else {
+            setStatus('OCR complete — values detected and applied to the calculator.');
+          }
+
+          setFields(normalized);
+          setRawText(text || '');
+          setTimestamp(new Date());
+        } catch (err) {
+          console.error('Failed to process OCR request', err);
+          setError(err.message || 'Failed to process OCR request. Check the console for details.');
+          setStatus('');
+          setFields(null);
+          setRawText('');
+          setTimestamp(null);
+        } finally {
+          setUploading(false);
+        }
+      }, [endpoint]);
+
+      const summary = useMemo(() => {
+        if (!fields) return [];
+        return DISPLAY_ORDER
+          .map((key) => {
+            const value = fields[key];
+            if (!isValidNumber(value)) return null;
+            return { key, label: FIELD_LABELS[key] || key, value };
+          })
+          .filter(Boolean);
+      }, [fields]);
+
+      const profitApplied = determineProfitInputValue(fields || {});
+      const carryApplied = determineCarryValue(fields || {});
+
+      return (
+        <div className="upload-card">
+          <h2>Upload account screenshot</h2>
+          <p>Automatically capture profit and P&amp;L figures from a brokerage screenshot.</p>
+          <p style={{ fontSize: '12px', color: '#666' }}>
+            Images are sent to <code>{endpoint}</code>. Override via <code>window.OCR_UPLOAD_ENDPOINT</code>.
+          </p>
+          <input type="file" accept="image/*" onChange={handleFileChange} disabled={uploading} />
+          {status && (
+            <p className="status">
+              {status}
+              {timestamp ? ` (updated ${timestamp.toLocaleTimeString()})` : ''}
+            </p>
+          )}
+          {error && <p className="status error">{error}</p>}
+          {summary.length > 0 && (
+            <div className="parsed-fields">
+              <dl>
+                {summary.map(({ key, label, value }) => (
+                  <React.Fragment key={key}>
+                    <dt>{label}</dt>
+                    <dd>{formatDisplayValue(key, value)}</dd>
+                  </React.Fragment>
+                ))}
+              </dl>
+              {(isValidNumber(profitApplied) || isValidNumber(carryApplied)) && (
+                <p className="hint">
+                  {isValidNumber(profitApplied) && `Profit input pre-filled with ${formatDisplayValue('profit', profitApplied)}.`}
+                  {isValidNumber(carryApplied) && ` Carry set to ${formatDisplayValue('carryPercent', carryApplied)}.`}
+                </p>
+              )}
+            </div>
+          )}
+          {rawText && (
+            <details>
+              <summary>Show raw OCR text</summary>
+              <div className="raw-text">{rawText}</div>
+            </details>
+          )}
+        </div>
+      );
+    }
+
+    const uploadRoot = document.getElementById('upload-root');
+    if (uploadRoot) {
+      const root = ReactDOM.createRoot(uploadRoot);
+      root.render(<OcrUpload endpoint={DEFAULT_OCR_ENDPOINT} />);
+    }
+  </script>
+
 </body>
 </html>
