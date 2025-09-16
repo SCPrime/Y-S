@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Tesseract from 'tesseract.js'
+import { parseDate } from './utils/parseDate.js'
 import './App.css'
 
 const WEIGHTS = {
@@ -215,21 +216,6 @@ const parsePercentage = (text, labels) => {
   return ''
 }
 
-const parseDate = (text) => {
-  const iso = text.match(/\b\d{4}-\d{2}-\d{2}\b/)
-  if (iso) return iso[0]
-
-  const slash = text.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/)
-  if (slash) return slash[0]
-
-  const month = text.match(
-    /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{2,4}\b/i,
-  )
-  if (month) return month[0]
-
-  return ''
-}
-
 const extractAdvancedFields = (text) => {
   if (!text) {
     return initialAdvancedInputs
@@ -272,7 +258,7 @@ const extractAdvancedFields = (text) => {
   ])
   const carryRaw = parsePercentage(normalizedText, ['carry', 'carry %', 'carry percent'])
   const carry = carryRaw ? String(clamp(Number(carryRaw) || 0, 0, 100)) : ''
-  const date = parseDate(text)
+  const date = parseDate(normalizedText)
 
   return {
     walletSize,
