@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseMetrics } from '../src/lib/ocr.js'
+import { initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from '../src/lib/ocr.js'
 
 test('parseMetrics normalizes OCR numbers and surfaces ISO date', () => {
   const text = `
@@ -35,5 +35,39 @@ test('parseMetrics normalizes OCR numbers and surfaces ISO date', () => {
     lossTrades: '6',
     date: '2024-09-15',
     carry: '12.5',
+  })
+})
+
+test('sanitizeParsedMetrics merges parsed values without clobbering manual edits', () => {
+  const previous = {
+    ...initialAdvancedInputs,
+    walletSize: '5000',
+    pnl: '1200',
+    carry: '8.5',
+    date: '2024-09-01',
+  }
+
+  const parsed = {
+    walletSize: '',
+    pnl: '2100',
+    unrealizedPnl: null,
+    totalTrades: 42,
+    winTrades: 30,
+    lossTrades: 12,
+    date: '2024-09-15',
+    carry: 14.25,
+  }
+
+  const merged = sanitizeParsedMetrics(previous, parsed)
+
+  assert.deepStrictEqual(merged, {
+    walletSize: '5000',
+    pnl: '2100',
+    unrealizedPnl: '',
+    totalTrades: '42',
+    winTrades: '30',
+    lossTrades: '12',
+    date: '2024-09-15',
+    carry: '14.25',
   })
 })
