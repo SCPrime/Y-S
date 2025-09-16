@@ -197,8 +197,12 @@
       const a = document.createElement('a');
       a.href = url;
       a.download = 'profit_split_founders_laura_damon.csv';
+      document.body.appendChild(a);
       a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 1000);
     }
 
     document.getElementById('recalcBtn').addEventListener('click', render);
