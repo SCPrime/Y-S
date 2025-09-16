@@ -19,6 +19,9 @@ const PARTY_WEIGHT_KEYS = {
   damon: 'D',
 }
 
+const ENTRY_FEE_RATE = 0.1
+const MANAGEMENT_FEE_RATE = 0.2
+
 const SCENARIOS = [
   {
     key: 'notdeployed',
@@ -106,13 +109,74 @@ const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
 
 const calcSplit = (profit, carryPct, scenarioKey) => {
   const weights = getWeights(scenarioKey)
-  const carry = (carryPct || 0) / 100
-  const founders = profit * (weights.F + carry * (weights.L + weights.D))
-  const laura = profit * ((1 - carry) * weights.L)
-  const damon = profit * ((1 - carry) * weights.D)
-  const total = founders + laura + damon
+  const carryRate = (carryPct || 0) / 100
 
-  return { founders, laura, damon, total, weights }
+  const foundersBase = profit * weights.F
+
+  const buildInvestorBreakdown = (weight) => {
+    const gross = profit * weight
+    const carry = gross * carryRate
+    const realizedBeforeFees = Math.max(0, gross - carry)
+    const entryFee = realizedBeforeFees * ENTRY_FEE_RATE
+    const afterEntry = realizedBeforeFees - entryFee
+    const managementFee = afterEntry * MANAGEMENT_FEE_RATE
+    const net = afterEntry - managementFee
+
+    return {
+      gross,
+      carry,
+      realizedBeforeFees,
+      entryFee,
+      afterEntry,
+      managementFee,
+      net,
+    }
+  }
+
+  const lauraBreakdown = buildInvestorBreakdown(weights.L)
+  const damonBreakdown = buildInvestorBreakdown(weights.D)
+
+  const carryToFounders = lauraBreakdown.carry + damonBreakdown.carry
+  const entryFeeTotal = lauraBreakdown.entryFee + damonBreakdown.entryFee
+  const managementFeeTotal = lauraBreakdown.managementFee + damonBreakdown.managementFee
+
+  const foundersPreFee = foundersBase + carryToFounders
+  const foundersTotal = foundersPreFee + entryFeeTotal + managementFeeTotal
+
+  const total = foundersTotal + lauraBreakdown.net + damonBreakdown.net
+
+  return {
+    founders: foundersTotal,
+    laura: lauraBreakdown.net,
+    damon: damonBreakdown.net,
+    total,
+    weights,
+    breakdown: {
+      carryRate,
+      entryFeeRate: ENTRY_FEE_RATE,
+      managementFeeRate: MANAGEMENT_FEE_RATE,
+      founders: {
+        base: foundersBase,
+        carry: carryToFounders,
+        entryFee: entryFeeTotal,
+        managementFee: managementFeeTotal,
+        preFee: foundersPreFee,
+        total: foundersTotal,
+      },
+      laura: lauraBreakdown,
+      damon: damonBreakdown,
+      entryFee: {
+        total: entryFeeTotal,
+        laura: lauraBreakdown.entryFee,
+        damon: damonBreakdown.entryFee,
+      },
+      managementFee: {
+        total: managementFeeTotal,
+        laura: lauraBreakdown.managementFee,
+        damon: damonBreakdown.managementFee,
+      },
+    },
+  }
 }
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -660,13 +724,32 @@ function App() {
   const handleDownload = () => {
     const profitValue = Math.max(0, Number(profitInput) || 0)
     const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-    const { founders, laura, damon, weights } = calcSplit(profitValue, carryValue, scenario)
+    const { founders, laura, damon, weights, breakdown } = calcSplit(profitValue, carryValue, scenario)
 
     const rows = [
-      ['Party', 'Amount', 'Profit', 'Carry_%', 'Scenario', 'W_Founders', 'W_Laura', 'W_Damon'],
+      [
+        'Party',
+        'Net_Amount',
+        'Base_or_Gross',
+        'Pre_Fee_Amount',
+        'Carry_To_Founders',
+        'Entry_Fee_Component',
+        'Mgmt_Fee_Component',
+        'Profit',
+        'Carry_%',
+        'Scenario',
+        'W_Founders',
+        'W_Laura',
+        'W_Damon',
+      ],
       [
         'Founders (Yoni+Spence)',
         founders.toFixed(2),
+        breakdown.founders.base.toFixed(2),
+        breakdown.founders.preFee.toFixed(2),
+        breakdown.founders.carry.toFixed(2),
+        breakdown.founders.entryFee.toFixed(2),
+        breakdown.founders.managementFee.toFixed(2),
         profitValue.toFixed(2),
         carryValue.toFixed(2),
         scenario,
@@ -674,8 +757,36 @@ function App() {
         formatWeightForCsv(weights.L),
         formatWeightForCsv(weights.D),
       ],
-      ['Laura', laura.toFixed(2), profitValue.toFixed(2), carryValue.toFixed(2), scenario, '', '', ''],
-      ['Damon', damon.toFixed(2), profitValue.toFixed(2), carryValue.toFixed(2), scenario, '', '', ''],
+      [
+        'Laura',
+        laura.toFixed(2),
+        breakdown.laura.gross.toFixed(2),
+        breakdown.laura.realizedBeforeFees.toFixed(2),
+        breakdown.laura.carry.toFixed(2),
+        breakdown.laura.entryFee.toFixed(2),
+        breakdown.laura.managementFee.toFixed(2),
+        profitValue.toFixed(2),
+        carryValue.toFixed(2),
+        scenario,
+        '',
+        '',
+        '',
+      ],
+      [
+        'Damon',
+        damon.toFixed(2),
+        breakdown.damon.gross.toFixed(2),
+        breakdown.damon.realizedBeforeFees.toFixed(2),
+        breakdown.damon.carry.toFixed(2),
+        breakdown.damon.entryFee.toFixed(2),
+        breakdown.damon.managementFee.toFixed(2),
+        profitValue.toFixed(2),
+        carryValue.toFixed(2),
+        scenario,
+        '',
+        '',
+        '',
+      ],
     ]
 
     const csvContent = rows.map((row) => row.join(',')).join('\n')
@@ -690,7 +801,7 @@ function App() {
 
   const profitValue = Math.max(0, Number(profitInput) || 0)
   const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-  const { founders, laura, damon, total, weights } = calcSplit(profitValue, carryValue, scenario)
+  const { founders, laura, damon, total, weights, breakdown } = calcSplit(profitValue, carryValue, scenario)
   const totalWeight = weights.F + weights.L + weights.D
   const partyValues = { founders, laura, damon }
   const partyShares = {
@@ -868,6 +979,13 @@ function App() {
         founders,
         laura,
         damon,
+        entryFeeRate: breakdown.entryFeeRate,
+        managementFeeRate: breakdown.managementFeeRate,
+        feeBreakdown: {
+          founders: breakdown.founders,
+          laura: breakdown.laura,
+          damon: breakdown.damon,
+        },
       },
     }
 
@@ -1065,16 +1183,27 @@ function App() {
               })}
             </div>
 
+            <p className="muted" aria-live="polite">
+              Net allocations reflect carry plus an {formatPercent(breakdown.entryFeeRate)} entry fee and{' '}
+              {formatPercent(breakdown.managementFeeRate)} management fee that route investor dollars to Founders.
+            </p>
+
             <div className="stat-cards">
               {PARTIES.map((party) => {
                 const value = partyValues[party.key]
                 const share = partyShares[party.key]
                 const weightKey = PARTY_WEIGHT_KEYS[party.key]
                 const weightValue = weights[weightKey]
+                const partyBreakdown = breakdown[party.key]
+                const isFounders = party.key === 'founders'
+                const description = isFounders
+                  ? 'Base share plus carry, entry, and management fees routed from investors.'
+                  : 'Net after carry, entry, and management fees routed to Founders.'
                 return (
                   <article key={party.key} className={`stat-card ${party.className}`}>
                     <header className="stat-header">{party.label}</header>
                     <div className="stat-amount">{formatCurrency(value)}</div>
+                    <p className="stat-description">{description}</p>
                     <dl className="stat-meta">
                       <div>
                         <dt>Share of profit</dt>
@@ -1084,6 +1213,51 @@ function App() {
                         <dt>Scenario weight</dt>
                         <dd>{formatPercent(weightValue)}</dd>
                       </div>
+                    </dl>
+                    <dl className="stat-breakdown">
+                      {isFounders ? (
+                        <>
+                          <div>
+                            <dt>Base share</dt>
+                            <dd>{formatCurrency(partyBreakdown.base)}</dd>
+                          </div>
+                          <div>
+                            <dt>Carry intake ({formatPercent(breakdown.carryRate)})</dt>
+                            <dd>{formatCurrency(partyBreakdown.carry)}</dd>
+                          </div>
+                          <div>
+                            <dt>Entry fees ({formatPercent(breakdown.entryFeeRate)})</dt>
+                            <dd>{formatCurrency(partyBreakdown.entryFee)}</dd>
+                          </div>
+                          <div>
+                            <dt>Mgmt fees ({formatPercent(breakdown.managementFeeRate)})</dt>
+                            <dd>{formatCurrency(partyBreakdown.managementFee)}</dd>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div>
+                            <dt>Gross before carry</dt>
+                            <dd>{formatCurrency(partyBreakdown.gross)}</dd>
+                          </div>
+                          <div>
+                            <dt>Carry to Founders ({formatPercent(breakdown.carryRate)})</dt>
+                            <dd>{formatCurrency(partyBreakdown.carry)}</dd>
+                          </div>
+                          <div>
+                            <dt>Realized pre-fees</dt>
+                            <dd>{formatCurrency(partyBreakdown.realizedBeforeFees)}</dd>
+                          </div>
+                          <div>
+                            <dt>Entry fee to Founders ({formatPercent(breakdown.entryFeeRate)})</dt>
+                            <dd>{formatCurrency(partyBreakdown.entryFee)}</dd>
+                          </div>
+                          <div>
+                            <dt>Mgmt fee to Founders ({formatPercent(breakdown.managementFeeRate)})</dt>
+                            <dd>{formatCurrency(partyBreakdown.managementFee)}</dd>
+                          </div>
+                        </>
+                      )}
                     </dl>
                   </article>
                 )
@@ -1119,16 +1293,20 @@ function App() {
             </div>
 
             <div className="formulas muted" aria-live="polite">
-              <div className="formula-head">Formulas (P = profit, c = carry as decimal)</div>
+              <div className="formula-head">Allocation flow</div>
               <ul>
                 <li>
-                  Founders = P×W<sub>F</sub> + c×P×(W<sub>L</sub> + W<sub>D</sub>)
+                  Gross share starts at P×W<sub>i</sub> for each party before fees.
                 </li>
                 <li>
-                  Laura = (1 − c)×P×W<sub>L</sub>
+                  Founders collect {formatPercent(breakdown.carryRate)} carry on Laura and Damon&apos;s gross allocations.
                 </li>
                 <li>
-                  Damon = (1 − c)×P×W<sub>D</sub>
+                  Realized investor profit pays a {formatPercent(breakdown.entryFeeRate)} entry fee routed to Founders.
+                </li>
+                <li>
+                  The post-entry balance pays a {formatPercent(breakdown.managementFeeRate)} management fee that also routes to
+                  Founders.
                 </li>
               </ul>
             </div>
