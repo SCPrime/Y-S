@@ -696,6 +696,49 @@ select:focus {
   font-size: 0.85rem;
 }
 
+.weights-summary.capital-history {
+  background: rgba(12, 18, 28, 0.6);
+  border: 1px solid rgba(35, 48, 71, 0.6);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+
+.capital-history-heading {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.capital-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.capital-history-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.capital-history-text {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.capital-history-values {
+  font-variant-numeric: tabular-nums;
+  color: #d7e0ea;
+}
+
 .advanced-metrics {
   margin-top: 18px;
   border-radius: 12px;

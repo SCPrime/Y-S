@@ -2,9 +2,60 @@ import { useEffect, useMemo, useState } from 'react'
 import Tesseract from 'tesseract.js'
 import './App.css'
 
-const WEIGHTS = {
-  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
-  deployed: { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
+const CAPITAL_HISTORY = [
+  {
+    key: 'notdeployed',
+    date: '2024-01-01',
+    label: 'Founders and Laura capitalized the program; Damon not yet deployed.',
+    capital: { founders: 340_000, laura: 175_000, damon: 0 },
+  },
+  {
+    key: 'deployed',
+    date: '2025-08-02',
+    label: 'Damon deployed with additional moonbag capital.',
+    capital: { founders: 340_000, laura: 175_000, damon: 55_000 },
+  },
+]
+
+const computeWeightsFromCapital = (capital) => {
+  const founders = capital?.founders ?? 0
+  const laura = capital?.laura ?? 0
+  const damon = capital?.damon ?? 0
+  const total = founders + laura + damon
+  if (total <= 0) {
+    return { F: 0, L: 0, D: 0 }
+  }
+  return {
+    F: founders / total,
+    L: laura / total,
+    D: damon / total,
+  }
+}
+
+const WEIGHTS = CAPITAL_HISTORY.reduce((accumulator, snapshot) => {
+  accumulator[snapshot.key] = computeWeightsFromCapital(snapshot.capital)
+  return accumulator
+}, {})
+
+const DEFAULT_SCENARIO = CAPITAL_HISTORY[0]?.key ?? 'notdeployed'
+
+const getCapitalSnapshot = (scenarioKey) => {
+  const snapshot = CAPITAL_HISTORY.find((entry) => entry.key === scenarioKey)
+  if (snapshot) {
+    return snapshot
+  }
+
+  const fallback = CAPITAL_HISTORY[CAPITAL_HISTORY.length - 1]
+  if (fallback) {
+    return fallback
+  }
+
+  return {
+    key: DEFAULT_SCENARIO,
+    date: '',
+    label: '',
+    capital: { founders: 0, laura: 0, damon: 0 },
+  }
 }
 
 const PARTIES = [
@@ -28,9 +79,9 @@ const SCENARIOS = [
   },
   {
     key: 'deployed',
-    label: 'Deployed on 2025-08-02 (5,000 capital)',
+    label: 'Deployed on 2025-08-02 (moonbag capital active)',
     summary:
-      'Damon is actively deployed and receives a positive weight based on his 5,000 capital contribution.',
+      'Damon is actively deployed and receives a positive weight after adding incremental capital to the moonbag program.',
   },
 ]
 
@@ -55,7 +106,7 @@ const ADVANCED_CLASSES = [
   {
     key: 'moonbag',
     label: 'Moonbag class → Damon',
-    description: 'Moonbag reserves accrue to Damon when he is deployed.',
+    description: 'Moonbag reserves route 75% to Founders and split the remaining 25% across investors by capital.',
     className: 'damon',
   },
 ]
@@ -102,7 +153,7 @@ const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
 
-const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
+const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS[DEFAULT_SCENARIO] ?? { F: 0, L: 0, D: 0 }
 
 const calcSplit = (profit, carryPct, scenarioKey) => {
   const weights = getWeights(scenarioKey)
@@ -308,7 +359,12 @@ function AdvancedFieldsSection({
   advancedInputs,
   weightInputs,
   normalizedWeights,
+  enforcedPartyWeights,
+  moonbagBreakdown,
+  capitalSnapshot,
+  capitalHistory,
   advancedDistribution,
+  enforcedPartyDistribution,
   advancedNumbers,
   combinedProfit,
   roi,
@@ -327,6 +383,22 @@ function AdvancedFieldsSection({
   }
 
   const snapshotLabel = advancedInputs.date ? `Snapshot: ${advancedInputs.date}` : 'Snapshot date pending'
+  const capitalEntry = capitalSnapshot ?? {
+    date: '',
+    label: '',
+    capital: { founders: 0, laura: 0, damon: 0 },
+  }
+  const historyEntries = capitalHistory ?? []
+  const computedWeights = enforcedPartyWeights ?? { founders: 0, laura: 0, damon: 0 }
+  const computedDistribution = enforcedPartyDistribution ?? { founders: 0, laura: 0, damon: 0 }
+  const moonbagDetails =
+    moonbagBreakdown ?? {
+      totalWeight: 0,
+      foundersWeight: 0,
+      lauraWeight: 0,
+      damonWeight: 0,
+      investorContributionShare: { laura: 1, damon: 0 },
+    }
 
   return (
     <section className={panelClasses.join(' ')}>
@@ -470,7 +542,7 @@ function AdvancedFieldsSection({
           />
         </div>
         <div className="field">
-          <label htmlFor="moonbagWeight">Moonbag weight</label>
+          <label htmlFor="moonbagWeight">Moonbag weight (auto 75/25 split)</label>
           <input
             id="moonbagWeight"
             name="moonbag"
@@ -486,10 +558,45 @@ function AdvancedFieldsSection({
             normalizedWeights.investor,
           )}, Moonbag {formatPercent(normalizedWeights.moonbag)}
         </div>
+        <div className="weights-summary muted" aria-live="polite">
+          Enforced party weights → Founders {formatPercent(computedWeights.founders)}, Laura{' '}
+          {formatPercent(computedWeights.laura)}, Damon {formatPercent(computedWeights.damon)}
+        </div>
+        <div className="weights-summary muted" aria-live="polite">
+          Moonbag routing ({formatPercent(moonbagDetails.totalWeight)} of combined PnL) → Founders{' '}
+          {formatPercent(moonbagDetails.foundersWeight)}, Laura {formatPercent(moonbagDetails.lauraWeight)},
+          Damon {formatPercent(moonbagDetails.damonWeight)}
+        </div>
+        <div className="weights-summary muted" aria-live="polite">
+          Capital mix snapshot ({capitalEntry.date || 'n/a'}) → Founders {formatCurrency(capitalEntry.capital.founders)},
+          Laura {formatCurrency(capitalEntry.capital.laura)}, Damon {formatCurrency(capitalEntry.capital.damon)}
+        </div>
+        <div className="weights-summary muted" aria-live="polite">
+          Investor moonbag split → Laura {formatPercent(moonbagDetails.investorContributionShare.laura)}, Damon{' '}
+          {formatPercent(moonbagDetails.investorContributionShare.damon)}
+        </div>
+        {historyEntries.length > 0 ? (
+          <div className="weights-summary capital-history" aria-live="polite">
+            <div className="capital-history-heading">Investor capital timeline</div>
+            <ul className="capital-history-list">
+              {historyEntries.map((entry) => (
+                <li key={entry.key}>
+                  <strong>{entry.date}</strong>
+                  {entry.label ? <span className="capital-history-text">{entry.label}</span> : null}
+                  <span className="capital-history-values">
+                    F {formatCurrency(entry.capital.founders)} • L {formatCurrency(entry.capital.laura)} • D{' '}
+                    {formatCurrency(entry.capital.damon)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
 
       <p className="advanced-note muted">
-        Entry dollars map to Founders, management dollars map to Laura, and the moonbag routes to Damon.
+        Entry dollars map to Founders, management dollars map to Laura, and the moonbag routes 75% to Founders with the
+        remaining 25% split across investors by their capital mix.
       </p>
 
       <div className="stat-cards">
@@ -561,6 +668,30 @@ function AdvancedFieldsSection({
           <div>
             <dt>Loss rate</dt>
             <dd>{formatPercent(lossRate)}</dd>
+          </div>
+          <div>
+            <dt>Founders enforced weight</dt>
+            <dd>{formatPercent(computedWeights.founders)}</dd>
+          </div>
+          <div>
+            <dt>Laura enforced weight</dt>
+            <dd>{formatPercent(computedWeights.laura)}</dd>
+          </div>
+          <div>
+            <dt>Damon enforced weight</dt>
+            <dd>{formatPercent(computedWeights.damon)}</dd>
+          </div>
+          <div>
+            <dt>Founders enforced allocation</dt>
+            <dd>{formatCurrency(computedDistribution.founders)}</dd>
+          </div>
+          <div>
+            <dt>Laura enforced allocation</dt>
+            <dd>{formatCurrency(computedDistribution.laura)}</dd>
+          </div>
+          <div>
+            <dt>Damon enforced allocation</dt>
+            <dd>{formatCurrency(computedDistribution.damon)}</dd>
           </div>
         </dl>
       </div>
@@ -699,6 +830,11 @@ function App() {
     damon: total > 0 ? damon / total : 0,
   }
   const scenarioDetails = SCENARIOS.find((option) => option.key === scenario) ?? SCENARIOS[0]
+  const capitalSnapshot = useMemo(() => getCapitalSnapshot(scenario), [scenario])
+  const capitalTotals = capitalSnapshot.capital ?? { founders: 0, laura: 0, damon: 0 }
+  const investorCapitalTotal = capitalTotals.laura + capitalTotals.damon
+  const lauraContributionShare = investorCapitalTotal > 0 ? capitalTotals.laura / investorCapitalTotal : 1
+  const damonContributionShare = investorCapitalTotal > 0 ? capitalTotals.damon / investorCapitalTotal : 0
 
   const advancedNumbers = useMemo(
     () => ({
@@ -731,11 +867,44 @@ function App() {
       }
     : { founder: 0, investor: 0, moonbag: 0 }
 
+  const moonbagFounderWeight = normalizedWeights.moonbag * 0.75
+  const moonbagInvestorWeight = normalizedWeights.moonbag * 0.25
+  const lauraMoonbagWeight = moonbagInvestorWeight * lauraContributionShare
+  const damonMoonbagWeight = moonbagInvestorWeight * damonContributionShare
+
+  const enforcedPartyWeights = {
+    founders: normalizedWeights.founder + moonbagFounderWeight,
+    laura: normalizedWeights.investor + lauraMoonbagWeight,
+    damon: damonMoonbagWeight,
+  }
+
   const combinedProfit = advancedNumbers.pnl + advancedNumbers.unrealizedPnl
   const advancedDistribution = {
     founder: combinedProfit * normalizedWeights.founder,
     investor: combinedProfit * normalizedWeights.investor,
     moonbag: combinedProfit * normalizedWeights.moonbag,
+  }
+
+  const moonbagBreakdown = {
+    totalWeight: normalizedWeights.moonbag,
+    foundersWeight: moonbagFounderWeight,
+    investorPoolWeight: moonbagInvestorWeight,
+    lauraWeight: lauraMoonbagWeight,
+    damonWeight: damonMoonbagWeight,
+    foundersAmount: combinedProfit * moonbagFounderWeight,
+    investorPoolAmount: combinedProfit * moonbagInvestorWeight,
+    lauraAmount: combinedProfit * lauraMoonbagWeight,
+    damonAmount: combinedProfit * damonMoonbagWeight,
+    investorContributionShare: {
+      laura: lauraContributionShare,
+      damon: damonContributionShare,
+    },
+  }
+
+  const enforcedPartyDistribution = {
+    founders: combinedProfit * enforcedPartyWeights.founders,
+    laura: combinedProfit * enforcedPartyWeights.laura,
+    damon: combinedProfit * enforcedPartyWeights.damon,
   }
 
   const winRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.winTrades / advancedNumbers.totalTrades : 0
@@ -858,6 +1027,26 @@ function App() {
       founderWeight: normalizedWeights.founder,
       investorWeight: normalizedWeights.investor,
       moonbagWeight: normalizedWeights.moonbag,
+      enforcedPartyWeights,
+      enforcedPartyDistribution,
+      moonbagBreakdown: {
+        totalWeight: moonbagBreakdown.totalWeight,
+        foundersWeight: moonbagBreakdown.foundersWeight,
+        lauraWeight: moonbagBreakdown.lauraWeight,
+        damonWeight: moonbagBreakdown.damonWeight,
+        investorContributionShare: moonbagBreakdown.investorContributionShare,
+        foundersAmount: moonbagBreakdown.foundersAmount,
+        lauraAmount: moonbagBreakdown.lauraAmount,
+        damonAmount: moonbagBreakdown.damonAmount,
+        investorPoolWeight: moonbagBreakdown.investorPoolWeight,
+        investorPoolAmount: moonbagBreakdown.investorPoolAmount,
+      },
+      capitalSnapshot: {
+        date: capitalSnapshot.date,
+        label: capitalSnapshot.label,
+        capital: capitalSnapshot.capital,
+      },
+      capitalHistory: CAPITAL_HISTORY,
       founderAllocation: advancedDistribution.founder,
       investorAllocation: advancedDistribution.investor,
       moonbagAllocation: advancedDistribution.moonbag,
@@ -1139,7 +1328,12 @@ function App() {
             advancedInputs={advancedInputs}
             weightInputs={weightInputs}
             normalizedWeights={normalizedWeights}
+            enforcedPartyWeights={enforcedPartyWeights}
+            moonbagBreakdown={moonbagBreakdown}
+            capitalSnapshot={capitalSnapshot}
+            capitalHistory={CAPITAL_HISTORY}
             advancedDistribution={advancedDistribution}
+            enforcedPartyDistribution={enforcedPartyDistribution}
             advancedNumbers={advancedNumbers}
             combinedProfit={combinedProfit}
             roi={roi}
