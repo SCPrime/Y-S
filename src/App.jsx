@@ -215,17 +215,81 @@ const parsePercentage = (text, labels) => {
   return ''
 }
 
-const parseDate = (text) => {
-  const iso = text.match(/\b\d{4}-\d{2}-\d{2}\b/)
-  if (iso) return iso[0]
+const MONTH_NAME_MAP = {
+  jan: '01',
+  feb: '02',
+  mar: '03',
+  apr: '04',
+  may: '05',
+  jun: '06',
+  jul: '07',
+  aug: '08',
+  sep: '09',
+  oct: '10',
+  nov: '11',
+  dec: '12',
+}
 
-  const slash = text.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/)
-  if (slash) return slash[0]
+const normalizeYear = (value) => {
+  if (!value) return ''
+  let numeric = Number(value)
+  if (Number.isNaN(numeric)) return ''
+  if (value.length === 2) {
+    numeric += numeric >= 50 ? 1900 : 2000
+  }
+  if (numeric < 1000 || numeric > 9999) return ''
+  return String(numeric).padStart(4, '0')
+}
+
+const toIsoDate = (year, month, day) => {
+  const normalizedYear = normalizeYear(year)
+  const monthNumber = Number(month)
+  const dayNumber = Number(day)
+
+  if (!normalizedYear) return ''
+  if (!Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) return ''
+  if (!Number.isInteger(dayNumber) || dayNumber < 1 || dayNumber > 31) return ''
+
+  const monthPart = String(monthNumber).padStart(2, '0')
+  const dayPart = String(dayNumber).padStart(2, '0')
+  return `${normalizedYear}-${monthPart}-${dayPart}`
+}
+
+const parseMonthToken = (token) => {
+  if (!token) return ''
+  const normalized = token.replace(/\./g, '').toLowerCase()
+  const key = normalized.slice(0, 3)
+  return MONTH_NAME_MAP[key] ?? ''
+}
+
+const parseDate = (text) => {
+  if (!text) return ''
+
+  const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
+  if (iso) {
+    const [, year, month, day] = iso
+    const normalized = toIsoDate(year, month, day)
+    if (normalized) return normalized
+  }
+
+  const slash = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/)
+  if (slash) {
+    const [, month, day, year] = slash
+    const normalized = toIsoDate(year, month, day)
+    if (normalized) return normalized
+  }
 
   const month = text.match(
-    /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{2,4}\b/i,
+    /\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)(\d{2,4})\b/i,
   )
-  if (month) return month[0]
+  if (month) {
+    const [, monthToken, day, year] = month
+    const monthValue = parseMonthToken(monthToken)
+    if (monthValue) {
+      const normalized = toIsoDate(year, monthValue, day)
+      if (normalized) return normalized
+    }
+  }
 
   return ''
 }
@@ -1316,4 +1380,6 @@ function App() {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
+export { parseDate }
 export default App
