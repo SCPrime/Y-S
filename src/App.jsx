@@ -587,12 +587,23 @@ function App() {
   const [aiStatus, setAiStatus] = useState('idle')
   const [aiError, setAiError] = useState('')
   const [aiReport, setAiReport] = useState('')
+  const [useAiExtraction, setUseAiExtraction] = useState(false)
+  const [useAiVision, setUseAiVision] = useState(false)
 
   useEffect(() => () => {
     if (uploadedImage && typeof URL !== 'undefined') {
       URL.revokeObjectURL(uploadedImage)
     }
   }, [uploadedImage])
+
+  useEffect(() => {
+    if (!aiKey) {
+      setUseAiExtraction(false)
+      setUseAiVision(false)
+    }
+  }, [aiKey])
+
+  const isAiControlsDisabled = !aiKey
 
   const handleProfitChange = (event) => {
     setProfitInput(event.target.value)
@@ -1161,6 +1172,42 @@ function App() {
               Drop a Figment dashboard screenshot to automatically extract wallet size, PnL, trade counts, and carry. All OCR runs in the
               browser via Tesseract.js.
             </p>
+            <div className="ai-toggle-row" role="group" aria-label="AI-assisted OCR options">
+              <label
+                className={`ai-toggle${isAiControlsDisabled ? ' disabled' : ''}`}
+                aria-disabled={isAiControlsDisabled ? 'true' : 'false'}
+                title={isAiControlsDisabled ? 'Enter API key to enable.' : undefined}
+              >
+                <input
+                  type="checkbox"
+                  checked={useAiExtraction}
+                  onChange={(event) => setUseAiExtraction(event.target.checked)}
+                  disabled={isAiControlsDisabled}
+                  title={isAiControlsDisabled ? 'Enter API key to enable.' : undefined}
+                />
+                <span className="ai-toggle-text">
+                  <span className="ai-toggle-title">Use AI extraction</span>
+                  <span className="ai-toggle-subtext">Clean OCR fields with an LLM pass.</span>
+                </span>
+              </label>
+              <label
+                className={`ai-toggle${isAiControlsDisabled ? ' disabled' : ''}`}
+                aria-disabled={isAiControlsDisabled ? 'true' : 'false'}
+                title={isAiControlsDisabled ? 'Enter API key to enable.' : undefined}
+              >
+                <input
+                  type="checkbox"
+                  checked={useAiVision}
+                  onChange={(event) => setUseAiVision(event.target.checked)}
+                  disabled={isAiControlsDisabled}
+                  title={isAiControlsDisabled ? 'Enter API key to enable.' : undefined}
+                />
+                <span className="ai-toggle-text">
+                  <span className="ai-toggle-title">Use AI vision</span>
+                  <span className="ai-toggle-subtext">Send the screenshot to a vision model.</span>
+                </span>
+              </label>
+            </div>
             <label className={`upload-zone ${ocrStatus === 'processing' ? 'uploading' : ''}`}>
               <input type="file" accept="image/*" onChange={handleOcrUpload} />
               <span>
