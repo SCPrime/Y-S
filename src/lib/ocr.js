@@ -11,6 +11,59 @@ export const initialAdvancedInputs = {
   carry: '',
 }
 
+const hasValue = (value) => {
+  if (value == null) {
+    return false
+  }
+  if (typeof value === 'string') {
+    return value.trim() !== ''
+  }
+  return true
+}
+
+const toSanitizedString = (value) => {
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value)
+  }
+  return String(value ?? '')
+}
+
+export const sanitizeParsedMetrics = (previousInputs, parsedMetrics) => {
+  const next = { ...previousInputs }
+
+  if (!parsedMetrics) {
+    return next
+  }
+
+  const assignIfPresent = (key, rawValue) => {
+    if (!hasValue(rawValue)) {
+      return
+    }
+    const normalized = toSanitizedString(rawValue)
+    if (normalized !== '') {
+      next[key] = normalized
+    }
+  }
+
+  assignIfPresent('walletSize', parsedMetrics.walletSize)
+  assignIfPresent('pnl', parsedMetrics.pnl)
+  assignIfPresent('unrealizedPnl', parsedMetrics.unrealizedPnl)
+  assignIfPresent('totalTrades', parsedMetrics.totalTrades)
+  assignIfPresent('winTrades', parsedMetrics.winTrades)
+  assignIfPresent('lossTrades', parsedMetrics.lossTrades)
+  assignIfPresent('date', parsedMetrics.date)
+
+  if (hasValue(parsedMetrics.carry)) {
+    const carryValue = clamp(Number(parsedMetrics.carry) || 0, 0, 100)
+    next.carry = String(carryValue)
+  }
+
+  return next
+}
+
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const normalizeMagnitude = (raw) => {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Tesseract from 'tesseract.js'
 import './App.css'
-import { clamp, initialAdvancedInputs, parseMetrics } from './lib/ocr.js'
+import { clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr.js'
 
 const WEIGHTS = {
   notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
@@ -591,20 +591,17 @@ function App() {
       const text = result.data.text ?? ''
       setOcrText(text)
       const extracted = parseMetrics(text)
-      setAdvancedInputs((previous) => {
-        const updates = Object.fromEntries(
-          Object.entries(extracted).filter(([, value]) => value !== ''),
-        )
-        return { ...previous, ...updates }
-      })
+      const mergedAdvancedInputs = sanitizeParsedMetrics(advancedInputs, extracted)
+      setAdvancedInputs(mergedAdvancedInputs)
 
-      if (extracted.pnl) {
-        const pnlValue = Math.max(0, Number(extracted.pnl) || 0)
+      if (mergedAdvancedInputs.pnl) {
+        const pnlValue = Math.max(0, Number(mergedAdvancedInputs.pnl) || 0)
         setProfitInput(String(pnlValue))
       }
 
-      if (extracted.carry) {
-        setCarryInput(String(extracted.carry))
+      if (mergedAdvancedInputs.carry) {
+        const carryValue = clamp(Number(mergedAdvancedInputs.carry) || 0, 0, 100)
+        setCarryInput(String(carryValue))
       }
 
       setOcrStatus('done')
