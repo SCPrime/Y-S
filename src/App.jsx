@@ -592,13 +592,10 @@ function App() {
       setOcrText(text)
       const extracted = parseMetrics(text)
       setAdvancedInputs((previous) => {
-        const next = { ...previous }
-        Object.entries(extracted).forEach(([key, value]) => {
-          if (value !== '') {
-            next[key] = value
-          }
-        })
-        return next
+        const updates = Object.fromEntries(
+          Object.entries(extracted).filter(([, value]) => value !== ''),
+        )
+        return { ...previous, ...updates }
       })
 
       if (extracted.pnl) {
@@ -607,7 +604,7 @@ function App() {
       }
 
       if (extracted.carry) {
-        setCarryInput(extracted.carry)
+        setCarryInput(String(extracted.carry))
       }
 
       setOcrStatus('done')
