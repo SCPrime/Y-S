@@ -1,0 +1,19 @@
+:root {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  line-height: 1.5;
+  --bar-h: 28px;
+  --gap: 10px;
+  --font: 14px;
+  background-color: #ffffff;
+  color: #121212;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: inherit;
+}
+
+a {
+  color: inherit;
+}

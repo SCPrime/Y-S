@@ -1,0 +1,115 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--gap);
+  margin-top: 12px;
+  margin-bottom: 20px;
+  align-items: flex-end;
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.controlLabel {
+  font-size: var(--font);
+}
+
+.controlInput {
+  padding: 8px;
+  font-size: var(--font);
+}
+
+.inlineControls {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.button {
+  padding: 8px 12px;
+  font-size: var(--font);
+  cursor: pointer;
+}
+
+.weights {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #666666;
+}
+
+.bars {
+  display: grid;
+  gap: 16px;
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: 170px 1fr 160px;
+  align-items: center;
+  gap: 12px;
+}
+
+.barLabel {
+  font-weight: 600;
+}
+
+.barTrack {
+  height: var(--bar-h);
+  background-color: #eeeeee;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+
+.barFill {
+  height: 100%;
+  transition: width 0.2s ease-in-out;
+}
+
+.founders {
+  background-color: #cfead9;
+}
+
+.laura {
+  background-color: #fde5b8;
+}
+
+.damon {
+  background-color: #d8e3ff;
+}
+
+.barValue {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.stacked {
+  margin-top: 18px;
+}
+
+.stackedTrack {
+  height: calc(var(--bar-h) + 6px);
+}
+
+.segment {
+  height: 100%;
+  display: inline-block;
+}
+
+.formulas {
+  margin-top: 18px;
+  font-size: 13px;
+  color: #666666;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
