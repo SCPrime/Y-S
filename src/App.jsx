@@ -2,11 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import Tesseract from 'tesseract.js'
 import './App.css'
 
-const WEIGHTS = {
-  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
-  deployed: { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
-}
-
 const PARTIES = [
   { key: 'founders', label: 'Founders (Yoni+Spence)', className: 'founders' },
   { key: 'laura', label: 'Laura', className: 'laura' },
@@ -19,20 +14,114 @@ const PARTY_WEIGHT_KEYS = {
   damon: 'D',
 }
 
+const PARTY_LOOKUP = Object.fromEntries(PARTIES.map((party) => [party.key, party]))
+
 const SCENARIOS = [
   {
     key: 'notdeployed',
     label: 'Not deployed (0 weight)',
     summary:
       'Damon is not deployed; his capital weight is zero so his carry routes to Founders.',
+    evaluationDate: '2025-01-18',
+    capitalHistory: {
+      founders: [
+        { amount: 10000, date: '2024-12-15' },
+      ],
+      laura: [
+        { amount: 5000, date: '2024-12-14' },
+      ],
+      damon: [],
+    },
   },
   {
     key: 'deployed',
     label: 'Deployed on 2025-08-02 (5,000 capital)',
     summary:
       'Damon is actively deployed and receives a positive weight based on his 5,000 capital contribution.',
+    evaluationDate: '2025-10-01',
+    capitalHistory: {
+      founders: [
+        { amount: 10000, date: '2025-08-28' },
+      ],
+      laura: [
+        { amount: 5000, date: '2025-08-27' },
+      ],
+      damon: [
+        { amount: 5000, date: '2025-09-20' },
+      ],
+    },
   },
 ]
+
+const SCENARIO_LOOKUP = Object.fromEntries(SCENARIOS.map((scenario) => [scenario.key, scenario]))
+
+const MS_PER_DAY = 86_400_000
+
+const parseIsoDate = (value) => {
+  if (!value) return null
+  const [year, month, day] = value.split('-').map(Number)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null
+  }
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+const calculateDaysActive = (startDate, endDate) => {
+  const start = parseIsoDate(startDate)
+  const end = parseIsoDate(endDate)
+  if (!start || !end) return 0
+  const diff = end.getTime() - start.getTime()
+  if (diff <= 0) return 0
+  return diff / MS_PER_DAY
+}
+
+const computeCapitalDays = (entries = [], evaluationDate) =>
+  entries.reduce((total, entry) => {
+    if (!entry) return total
+    const amount = Number(entry.amount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return total
+    }
+    const daysActive = calculateDaysActive(entry.date, evaluationDate)
+    if (daysActive <= 0) {
+      return total
+    }
+    return total + amount * daysActive
+  }, 0)
+
+const getScenarioAnalysis = (scenarioKey) => {
+  const config = SCENARIO_LOOKUP[scenarioKey] ?? SCENARIO_LOOKUP.notdeployed
+  const { capitalHistory, evaluationDate } = config
+  const capitalDays = {
+    founders: computeCapitalDays(capitalHistory.founders, evaluationDate),
+    laura: computeCapitalDays(capitalHistory.laura, evaluationDate),
+    damon: computeCapitalDays(capitalHistory.damon, evaluationDate),
+  }
+  const totalCapitalDays = capitalDays.founders + capitalDays.laura + capitalDays.damon
+  const weights = totalCapitalDays > 0
+    ? {
+        F: capitalDays.founders / totalCapitalDays,
+        L: capitalDays.laura / totalCapitalDays,
+        D: capitalDays.damon / totalCapitalDays,
+      }
+    : { F: 1, L: 0, D: 0 }
+  const investorCapitalDays = capitalDays.laura + capitalDays.damon
+  const investorWeights = investorCapitalDays > 0
+    ? {
+        laura: capitalDays.laura / investorCapitalDays,
+        damon: capitalDays.damon / investorCapitalDays,
+      }
+    : { laura: 0, damon: 0 }
+
+  return {
+    config,
+    capitalDays,
+    weights,
+    totalCapitalDays,
+    investorWeights,
+    investorCapitalDays,
+  }
+}
 
 const TABS = [
   { key: 'calculator', label: 'Profit split calculator' },
@@ -71,12 +160,6 @@ const initialAdvancedInputs = {
   carry: '',
 }
 
-const initialWeightInputs = {
-  founder: '50',
-  investor: '35',
-  moonbag: '15',
-}
-
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -102,17 +185,14 @@ const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
 
-const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
-
-const calcSplit = (profit, carryPct, scenarioKey) => {
-  const weights = getWeights(scenarioKey)
+const calcSplit = (profit, carryPct, weights) => {
   const carry = (carryPct || 0) / 100
   const founders = profit * (weights.F + carry * (weights.L + weights.D))
   const laura = profit * ((1 - carry) * weights.L)
   const damon = profit * ((1 - carry) * weights.D)
   const total = founders + laura + damon
 
-  return { founders, laura, damon, total, weights }
+  return { founders, laura, damon, total }
 }
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -306,7 +386,6 @@ function AdvancedFieldsSection({
   title,
   description,
   advancedInputs,
-  weightInputs,
   normalizedWeights,
   advancedDistribution,
   advancedNumbers,
@@ -317,8 +396,12 @@ function AdvancedFieldsSection({
   profitPerTrade,
   onAdvancedChange,
   onAdvancedBlur,
-  onWeightChange,
-  onWeightBlur,
+  capitalDays,
+  investorPoolWeights,
+  capitalHistory,
+  evaluationDate,
+  baseFounderPortion,
+  investorPortion,
   isWide = false,
 }) {
   const panelClasses = ['panel', 'ai-panel', 'advanced-panel']
@@ -327,6 +410,14 @@ function AdvancedFieldsSection({
   }
 
   const snapshotLabel = advancedInputs.date ? `Snapshot: ${advancedInputs.date}` : 'Snapshot date pending'
+  const totalInvestorCapitalDays = capitalDays.laura + capitalDays.damon
+  const capitalCutoffLabel = evaluationDate ? `Capital-day cutoff: ${evaluationDate}` : 'Capital-day cutoff pending'
+  const investorMessage = totalInvestorCapitalDays > 0
+    ? `${capitalCutoffLabel}. ${formatPercent(baseFounderPortion)} of the moonshot amount routes to Founders; the remaining ${formatPercent(
+        investorPortion,
+      )} follows investor capital-days.`
+    : `${capitalCutoffLabel}. No investor capital-days recorded, so the full moonshot allocation routes to Founders.`
+  const partyKeys = ['founders', 'laura', 'damon']
 
   return (
     <section className={panelClasses.join(' ')}>
@@ -446,51 +537,60 @@ function AdvancedFieldsSection({
 
       <div className="weights-grid">
         <div className="field">
-          <label htmlFor="founderWeight">Founder weight</label>
-          <input
-            id="founderWeight"
-            name="founder"
-            type="text"
-            inputMode="decimal"
-            value={weightInputs.founder}
-            onChange={onWeightChange}
-            onBlur={onWeightBlur}
-          />
+          <label>Founder share (locked)</label>
+          <span className="pill">{formatPercent(normalizedWeights.founder)}</span>
+          <p className="help muted">
+            {totalInvestorCapitalDays > 0
+              ? `Baseline share fixed at ${formatPercent(baseFounderPortion)} of the moonshot amount.`
+              : 'Investors are inactive for this snapshot, so Founders absorb the full allocation.'}
+          </p>
         </div>
         <div className="field">
-          <label htmlFor="investorWeight">Investor weight</label>
-          <input
-            id="investorWeight"
-            name="investor"
-            type="text"
-            inputMode="decimal"
-            value={weightInputs.investor}
-            onChange={onWeightChange}
-            onBlur={onWeightBlur}
-          />
+          <label>Laura investor share</label>
+          <span className="pill">{formatPercent(normalizedWeights.investor)}</span>
+          <p className="help muted">
+            Capital-days: {formatInteger(capitalDays.laura)}{' '}
+            {totalInvestorCapitalDays > 0
+              ? `(pool share ${formatPercent(investorPoolWeights.laura)})`
+              : '(no active capital)'}
+          </p>
         </div>
         <div className="field">
-          <label htmlFor="moonbagWeight">Moonbag weight</label>
-          <input
-            id="moonbagWeight"
-            name="moonbag"
-            type="text"
-            inputMode="decimal"
-            value={weightInputs.moonbag}
-            onChange={onWeightChange}
-            onBlur={onWeightBlur}
-          />
+          <label>Damon moonbag share</label>
+          <span className="pill">{formatPercent(normalizedWeights.moonbag)}</span>
+          <p className="help muted">
+            Capital-days: {formatInteger(capitalDays.damon)}{' '}
+            {totalInvestorCapitalDays > 0
+              ? `(pool share ${formatPercent(investorPoolWeights.damon)})`
+              : '(no active capital)'}
+          </p>
         </div>
         <div className="weights-summary muted" aria-live="polite">
-          Normalized weights → Founder {formatPercent(normalizedWeights.founder)}, Investor {formatPercent(
-            normalizedWeights.investor,
-          )}, Moonbag {formatPercent(normalizedWeights.moonbag)}
+          {investorMessage}
         </div>
       </div>
 
-      <p className="advanced-note muted">
-        Entry dollars map to Founders, management dollars map to Laura, and the moonbag routes to Damon.
-      </p>
+      <div className="advanced-note muted">
+        <p>
+          Capital contributions used for capital-day math:
+        </p>
+        <ul>
+          {partyKeys.map((partyKey) => {
+            const partyMeta = PARTY_LOOKUP[partyKey]
+            const entries = capitalHistory?.[partyKey] ?? []
+            return (
+              <li key={partyKey}>
+                <strong>{partyMeta?.label ?? partyKey}:</strong>{' '}
+                {entries.length > 0
+                  ? entries
+                      .map((entry) => `${formatCurrency(entry.amount)} on ${entry.date}`)
+                      .join('; ')
+                  : 'No deposits recorded.'}
+              </li>
+            )
+          })}
+        </ul>
+      </div>
 
       <div className="stat-cards">
         {ADVANCED_CLASSES.map((classification) => (
@@ -574,7 +674,6 @@ function App() {
   const [carryInput, setCarryInput] = useState('20')
   const [scenario, setScenario] = useState('notdeployed')
   const [advancedInputs, setAdvancedInputs] = useState(initialAdvancedInputs)
-  const [weightInputs, setWeightInputs] = useState(initialWeightInputs)
   const [ocrStatus, setOcrStatus] = useState('idle')
   const [ocrProgress, setOcrProgress] = useState(0)
   const [ocrText, setOcrText] = useState('')
@@ -646,36 +745,54 @@ function App() {
     setAdvancedInputs((previous) => ({ ...previous, [name]: sanitized }))
   }
 
-  const handleWeightChange = (event) => {
-    const { name, value } = event.target
-    setWeightInputs((previous) => ({ ...previous, [name]: value }))
-  }
-
-  const handleWeightBlur = (event) => {
-    const { name, value } = event.target
-    const sanitized = sanitizeNumericInput(value)
-    setWeightInputs((previous) => ({ ...previous, [name]: sanitized }))
-  }
+  const scenarioAnalysis = useMemo(() => getScenarioAnalysis(scenario), [scenario])
 
   const handleDownload = () => {
     const profitValue = Math.max(0, Number(profitInput) || 0)
     const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-    const { founders, laura, damon, weights } = calcSplit(profitValue, carryValue, scenario)
+    const { founders, laura, damon } = calcSplit(profitValue, carryValue, scenarioAnalysis.weights)
 
     const rows = [
-      ['Party', 'Amount', 'Profit', 'Carry_%', 'Scenario', 'W_Founders', 'W_Laura', 'W_Damon'],
+      [
+        'Party',
+        'Amount',
+        'Profit',
+        'Carry_%',
+        'Scenario',
+        'Capital_Days',
+        'Scenario_Weight',
+        'Moonshot_Weight',
+      ],
       [
         'Founders (Yoni+Spence)',
         founders.toFixed(2),
         profitValue.toFixed(2),
         carryValue.toFixed(2),
         scenario,
-        formatWeightForCsv(weights.F),
-        formatWeightForCsv(weights.L),
-        formatWeightForCsv(weights.D),
+        scenarioAnalysis.capitalDays.founders.toFixed(2),
+        formatWeightForCsv(scenarioAnalysis.weights.F),
+        formatWeightForCsv(normalizedWeights.founder),
       ],
-      ['Laura', laura.toFixed(2), profitValue.toFixed(2), carryValue.toFixed(2), scenario, '', '', ''],
-      ['Damon', damon.toFixed(2), profitValue.toFixed(2), carryValue.toFixed(2), scenario, '', '', ''],
+      [
+        'Laura',
+        laura.toFixed(2),
+        profitValue.toFixed(2),
+        carryValue.toFixed(2),
+        scenario,
+        scenarioAnalysis.capitalDays.laura.toFixed(2),
+        formatWeightForCsv(scenarioAnalysis.weights.L),
+        formatWeightForCsv(normalizedWeights.investor),
+      ],
+      [
+        'Damon',
+        damon.toFixed(2),
+        profitValue.toFixed(2),
+        carryValue.toFixed(2),
+        scenario,
+        scenarioAnalysis.capitalDays.damon.toFixed(2),
+        formatWeightForCsv(scenarioAnalysis.weights.D),
+        formatWeightForCsv(normalizedWeights.moonbag),
+      ],
     ]
 
     const csvContent = rows.map((row) => row.join(',')).join('\n')
@@ -690,15 +807,20 @@ function App() {
 
   const profitValue = Math.max(0, Number(profitInput) || 0)
   const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-  const { founders, laura, damon, total, weights } = calcSplit(profitValue, carryValue, scenario)
-  const totalWeight = weights.F + weights.L + weights.D
+  const { founders, laura, damon, total } = calcSplit(
+    profitValue,
+    carryValue,
+    scenarioAnalysis.weights,
+  )
+  const totalWeight =
+    scenarioAnalysis.weights.F + scenarioAnalysis.weights.L + scenarioAnalysis.weights.D
   const partyValues = { founders, laura, damon }
   const partyShares = {
     founders: total > 0 ? founders / total : 0,
     laura: total > 0 ? laura / total : 0,
     damon: total > 0 ? damon / total : 0,
   }
-  const scenarioDetails = SCENARIOS.find((option) => option.key === scenario) ?? SCENARIOS[0]
+  const scenarioDetails = scenarioAnalysis.config
 
   const advancedNumbers = useMemo(
     () => ({
@@ -713,25 +835,21 @@ function App() {
     [advancedInputs],
   )
 
-  const weightNumbers = useMemo(
-    () => ({
-      founder: Math.max(0, Number(weightInputs.founder) || 0),
-      investor: Math.max(0, Number(weightInputs.investor) || 0),
-      moonbag: Math.max(0, Number(weightInputs.moonbag) || 0),
-    }),
-    [weightInputs],
-  )
-
-  const weightSum = weightNumbers.founder + weightNumbers.investor + weightNumbers.moonbag
-  const normalizedWeights = weightSum > 0
-    ? {
-        founder: weightNumbers.founder / weightSum,
-        investor: weightNumbers.investor / weightSum,
-        moonbag: weightNumbers.moonbag / weightSum,
-      }
-    : { founder: 0, investor: 0, moonbag: 0 }
-
   const combinedProfit = advancedNumbers.pnl + advancedNumbers.unrealizedPnl
+  const investorPortion = 0.25
+  const baseFounderPortion = 0.75
+  const hasInvestorCapital = scenarioAnalysis.investorCapitalDays > 0
+  const normalizedWeights = hasInvestorCapital
+    ? {
+        founder: baseFounderPortion,
+        investor: investorPortion * scenarioAnalysis.investorWeights.laura,
+        moonbag: investorPortion * scenarioAnalysis.investorWeights.damon,
+      }
+    : { founder: 1, investor: 0, moonbag: 0 }
+  const investorPoolWeights = hasInvestorCapital
+    ? scenarioAnalysis.investorWeights
+    : { laura: 0, damon: 0 }
+
   const advancedDistribution = {
     founder: combinedProfit * normalizedWeights.founder,
     investor: combinedProfit * normalizedWeights.investor,
@@ -804,7 +922,6 @@ function App() {
 
   const handleResetOcr = () => {
     setAdvancedInputs(initialAdvancedInputs)
-    setWeightInputs(initialWeightInputs)
     setOcrStatus('idle')
     setOcrProgress(0)
     setOcrText('')
@@ -861,6 +978,15 @@ function App() {
       founderAllocation: advancedDistribution.founder,
       investorAllocation: advancedDistribution.investor,
       moonbagAllocation: advancedDistribution.moonbag,
+      scenarioWeights: scenarioAnalysis.weights,
+      capitalDays: scenarioAnalysis.capitalDays,
+      totalCapitalDays: scenarioAnalysis.totalCapitalDays,
+      investorCapitalDays: scenarioAnalysis.investorCapitalDays,
+      investorPoolWeights,
+      baseFounderPortion,
+      investorPortion,
+      capitalHistory: scenarioAnalysis.config.capitalHistory,
+      capitalEvaluationDate: scenarioAnalysis.config.evaluationDate,
       scenario,
       calculator: {
         profitInput: profitValue,
@@ -1036,8 +1162,9 @@ function App() {
             </div>
 
             <div className="weights muted" aria-live="polite">
-              Weights → Founders: {formatPercent(weights.F)}, Laura: {formatPercent(weights.L)}, Damon: {formatPercent(weights.D)} (sum{' '}
-              {(totalWeight * 100).toFixed(2)}%)
+              Weights → Founders: {formatPercent(scenarioAnalysis.weights.F)}, Laura: {formatPercent(
+                scenarioAnalysis.weights.L,
+              )}, Damon: {formatPercent(scenarioAnalysis.weights.D)} (sum {(totalWeight * 100).toFixed(2)}%)
             </div>
           </section>
 
@@ -1047,8 +1174,8 @@ function App() {
               Scenario: <span className="pill">{scenarioDetails.label}</span>
             </p>
             <p className="muted">
-              Investor-class weights for this snapshot come from the section below. Use the entry, management, and moonbag inputs
-              to align Founders, Laura, and Damon allocations with the current calculator state.
+              Investor-class weights for this snapshot come from the capital-day ledger below. The moonshot pool locks 75% to the
+              Founders and distributes the remaining 25% across Laura and Damon based on their time-weighted capital.
             </p>
 
             <div className="legend" role="list" aria-label="Party color legend">
@@ -1058,7 +1185,7 @@ function App() {
                   <span key={party.key} className="lg" role="listitem">
                     <span className={`sw ${party.className}`} aria-hidden="true" />
                     <span>
-                      {party.label} • Weight {formatPercent(weights[weightKey])}
+                      {party.label} • Weight {formatPercent(scenarioAnalysis.weights[weightKey])}
                     </span>
                   </span>
                 )
@@ -1070,7 +1197,7 @@ function App() {
                 const value = partyValues[party.key]
                 const share = partyShares[party.key]
                 const weightKey = PARTY_WEIGHT_KEYS[party.key]
-                const weightValue = weights[weightKey]
+                const weightValue = scenarioAnalysis.weights[weightKey]
                 return (
                   <article key={party.key} className={`stat-card ${party.className}`}>
                     <header className="stat-header">{party.label}</header>
@@ -1135,9 +1262,8 @@ function App() {
           </section>
           <AdvancedFieldsSection
             title="Investor class allocations"
-            description="Assign snapshot dollars, dates, and weights for the entry, management, and moonbag classes. These values drive the allocations that flow to Founders, Laura, and Damon."
+            description="Snapshot metrics drive a locked 75% / 25% moonshot allocation. Founders receive the base share while investor capital-days split the remaining pool across Laura and Damon."
             advancedInputs={advancedInputs}
-            weightInputs={weightInputs}
             normalizedWeights={normalizedWeights}
             advancedDistribution={advancedDistribution}
             advancedNumbers={advancedNumbers}
@@ -1148,8 +1274,12 @@ function App() {
             profitPerTrade={profitPerTrade}
             onAdvancedChange={handleAdvancedChange}
             onAdvancedBlur={handleAdvancedBlur}
-            onWeightChange={handleWeightChange}
-            onWeightBlur={handleWeightBlur}
+            capitalDays={scenarioAnalysis.capitalDays}
+            investorPoolWeights={investorPoolWeights}
+            capitalHistory={scenarioAnalysis.config.capitalHistory}
+            evaluationDate={scenarioAnalysis.config.evaluationDate}
+            baseFounderPortion={baseFounderPortion}
+            investorPortion={investorPortion}
             isWide
           />
         </div>
@@ -1211,9 +1341,8 @@ function App() {
 
           <AdvancedFieldsSection
             title="Advanced calculator fields"
-            description="Values pulled from OCR are editable. Adjust the distribution weights to drive the entry, management, and moonbag allocations that route dollars to each investor class."
+            description="Values pulled from OCR are editable. The resulting moonshot allocation is locked to 75% Founders / 25% investor pool, with the investor share weighted by capital-days."
             advancedInputs={advancedInputs}
-            weightInputs={weightInputs}
             normalizedWeights={normalizedWeights}
             advancedDistribution={advancedDistribution}
             advancedNumbers={advancedNumbers}
@@ -1224,8 +1353,12 @@ function App() {
             profitPerTrade={profitPerTrade}
             onAdvancedChange={handleAdvancedChange}
             onAdvancedBlur={handleAdvancedBlur}
-            onWeightChange={handleWeightChange}
-            onWeightBlur={handleWeightBlur}
+            capitalDays={scenarioAnalysis.capitalDays}
+            investorPoolWeights={investorPoolWeights}
+            capitalHistory={scenarioAnalysis.config.capitalHistory}
+            evaluationDate={scenarioAnalysis.config.evaluationDate}
+            baseFounderPortion={baseFounderPortion}
+            investorPortion={investorPortion}
             isWide
           />
 
