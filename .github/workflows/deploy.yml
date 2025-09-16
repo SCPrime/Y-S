@@ -1,0 +1,79 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+
+      # Find the app folder (root, client, frontend, app, or web)
+      - name: Find project directory
+        id: wd
+        shell: bash
+        run: |
+          for d in . client frontend app web; do
+            if [ -f "$d/package.json" ]; then
+              echo "dir=$d" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          done
+          echo "No package.json found" >&2
+          exit 1
+
+      - name: Install deps
+        working-directory: ${{ steps.wd.outputs.dir }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Build
+        working-directory: ${{ steps.wd.outputs.dir }}
+        run: npm run build
+
+      - name: Detect output dir
+        id: out
+        working-directory: ${{ steps.wd.outputs.dir }}
+        run: |
+          if [ -d dist ]; then echo "dir=dist" >> $GITHUB_OUTPUT;
+          elif [ -d build ]; then echo "dir=build" >> $GITHUB_OUTPUT;
+          elif [ -f index.html ]; then mkdir -p __site && cp -R * __site && echo "dir=__site" >> $GITHUB_OUTPUT;
+          else echo "No output directory found" >&2; exit 1; fi
+
+      # SPA fix so React Router deep links don't 404 on Pages
+      - name: SPA 404 fallback (optional)
+        working-directory: ${{ steps.wd.outputs.dir }}/${{ steps.out.outputs.dir }}
+        run: cp index.html 404.html || true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.wd.outputs.dir }}/${{ steps.out.outputs.dir }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
