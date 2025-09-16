@@ -316,6 +316,23 @@ select:focus {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.moonshot-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.moonshot-section h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #d7e0ea;
+}
+
+.moonshot-note {
+  margin: 0;
+}
+
 .stat-card {
   position: relative;
   overflow: hidden;
