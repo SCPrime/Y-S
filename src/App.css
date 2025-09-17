@@ -569,6 +569,41 @@ select:focus {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
+.ai-options {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(57, 208, 216, 0.25);
+  border-radius: 14px;
+  background: rgba(17, 23, 35, 0.58);
+}
+
+.ai-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #dfe9ff;
+}
+
+.ai-toggle input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+
+.ai-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-toggle strong {
+  font-weight: 600;
+  color: #f2f7ff;
+}
+
 .upload-zone {
   position: relative;
   border: 1px dashed rgba(57, 208, 216, 0.45);

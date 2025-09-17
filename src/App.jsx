@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { runOcr, parseMetrics, sanitizeParsedMetrics, initialAdvancedInputs } from './lib/ocr'
 import './App.css'
+codex/add-ai-extraction-and-vision-support
+ codex/add-ai-extraction-and-vision-support
+import { llmOcrTextExtract, llmVisionExtractFromImage } from './lib/ai'
+
+
+codex/create-image-preprocessing-and-metrics-parser
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr.js'
+ main
+=======
 import { useEffect, useMemo, useState } from 'react'
 import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr'
 import './App.css'
@@ -11,6 +20,7 @@ import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs, allocateProfi
 import { applyFees } from './lib/fees'
 
 // weights used by the scenarios UI
+main
 const WEIGHTS = {
   notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
   deployed:    { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
@@ -573,6 +583,15 @@ function App() {
   const [aiStatus, setAiStatus] = useState('idle')
   const [aiError, setAiError] = useState('')
   const [aiReport, setAiReport] = useState('')
+  const [useAiVision, setUseAiVision] = useState(false)
+  const [useAiExtraction, setUseAiExtraction] = useState(false)
+
+  const aiConfig = useMemo(() => {
+    const apiKey = aiKey.trim()
+    const baseUrl = aiBaseUrl.trim().replace(/\/+$/, '')
+    const model = aiModel.trim()
+    return { apiKey, baseUrl, model }
+  }, [aiKey, aiBaseUrl, aiModel])
 
   useEffect(() => () => {
     if (uploadedImage && typeof URL !== 'undefined') {
@@ -702,123 +721,220 @@ function App() {
         carryValue.toFixed(2),
         scenario,
         '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-      ],
-      [
-        'Damon',
-        allocationResult.parties.damon.toFixed(2),
-        profitValue.toFixed(2),
-        carryValue.toFixed(2),
-        scenario,
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-      ],
-    ]
+   // --- Replace the whole conflicted region (724–845) with this:
 
-    const csvContent = rows.map((row) => row.join(',')).join('\n')
-    const blob = new Blob([csvContent], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = 'profit_split_founders_laura_damon.csv'
-    anchor.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+setOcrProgress(0)
+setOcrStatus('working')
+setOcrError('')
+setAiReport('')
+
+let text = ''
+
+try {
+  if (useAiVision) {
+    if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
+      errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
+    } else {
+      const mapped = await llmVisionExtractFromImage(file, aiConfig)
+      applyExtractionResult(mapped)
+      setOcrStatus('done')
+      setOcrProgress(100)
+      // AI may already have provided structured results; we still keep `text` empty to trigger OCR fallback only if needed
+    }
   }
 
-  const profitValue = Math.max(0, Number(profitInput) || 0)
-  const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-  const scenarioDetails = SCENARIO_LOOKUP[scenario] ?? SCENARIOS[0]
-  const scenarioWeightResult =
-    SCENARIO_WEIGHT_RESULTS[scenarioDetails.key] ?? DEFAULT_WEIGHT_RESULT
-  const weights = scenarioWeightResult.weights
-  const capitalDays = scenarioWeightResult.capitalDays
-  const totalCapitalDays = scenarioWeightResult.totalCapitalDays
-  const allocation = allocateProfit({
-    realizedPnl: profitValue,
-    carryPercent: carryValue,
-    weights,
-    damonDeployed: scenarioDetails.damonDeployed,
-  })
-  const totalWeight = weights.F + weights.L + weights.D
-  const partyValues = allocation.parties
-  const total = allocation.totals.profit
-  const partyShares = {
-    founders: total > 0 ? partyValues.founders / total : 0,
-    laura: total > 0 ? partyValues.laura / total : 0,
-    damon: total > 0 ? partyValues.damon / total : 0,
+  // Fallback to on-device OCR if we don't yet have raw text (or if useAiVision is off)
+  if (!text) {
+    const result = await runOcr(file, {
+      onProgress: (p) => {
+        if (typeof p === 'number') setOcrProgress(Math.round(p * 100))
+      },
+      logger: (msg) => {
+        if (msg.status === 'recognizing text') {
+          setOcrProgress(Math.round((msg.progress || 0) * 100))
+        }
+      }
+    })
+    text = result?.data?.text ?? (typeof result === 'string' ? result : '')
   }
 
-codex/create-image-preprocessing-and-metrics-parser
-  const advancedNumbers = useMemo(
-    () => ({
-codex/add-weights,-alloc,-and-fees-modules
-      walletSize: Math.max(0, Number(advancedInputs.walletSize) || 0),
-      pnl: Number(advancedInputs.pnl) || 0,
-      unrealizedPnl: Number(advancedInputs.unrealizedPnl) || 0,
-      totalTrades: Math.max(0, Number(advancedInputs.totalTrades) || 0),
-      winTrades: Math.max(0, Number(advancedInputs.winTrades) || 0),
-      lossTrades: Math.max(0, Number(advancedInputs.lossTrades) || 0),
-      carry: Math.max(0, Number(advancedInputs.carry) || 0),
-      entryFee: Math.max(0, Number(advancedInputs.entryFee) || 0),
-      managementFee: Math.max(0, Number(advancedInputs.managementFee) || 0),
-    }),
-    [advancedInputs],
-  )
-
-  const weightData = useMemo(() => normalizeClasses(weightInputs), [weightInputs])
-  const weightSum = weightData.total
-  const normalizedWeights = weightData.normalized
-
-  const combinedProfit = advancedNumbers.pnl + advancedNumbers.unrealizedPnl
-  const feeBreakdown = useMemo(
-    () =>
-      applyFees(combinedProfit, {
-        entryFeePercent: advancedNumbers.entryFee,
-        managementFeePercent: advancedNumbers.managementFee,
-      }),
-    [combinedProfit, advancedNumbers.entryFee, advancedNumbers.managementFee],
-  )
-  const netAdvancedProfit = feeBreakdown.netAmount
-  const advancedDistribution = {
-    founder: netAdvancedProfit * normalizedWeights.founder,
-    investor: netAdvancedProfit * normalizedWeights.investor,
-    moonbag: netAdvancedProfit * normalizedWeights.moonbag,
+  if (!text || !text.trim()) {
+    setOcrText('')
+    setOcrStatus('done')
+    return
   }
 
-  const moonshotDistribution = computeMoonshotDistribution(netAdvancedProfit, normalizedWeights, {
-    damonDeployed: scenarioDetails.damonDeployed,
-  })
+  setOcrText(text)
 
-  const winRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.winTrades / advancedNumbers.totalTrades : 0
-  const lossRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.lossTrades / advancedNumbers.totalTrades : 0
-  const profitPerTrade = advancedNumbers.totalTrades > 0 ? advancedNumbers.pnl / advancedNumbers.totalTrades : 0
-  const roi = advancedNumbers.walletSize > 0 ? combinedProfit / advancedNumbers.walletSize : 0
-  const netRoi = advancedNumbers.walletSize > 0 ? netAdvancedProfit / advancedNumbers.walletSize : 0
+  // Heuristic extraction first (quick wins), then metrics parser for full detail
+  const heuristic = extractAdvancedFields(text)
+  applyExtractionResult({ advanced: heuristic })
 
-      walletSize: toNumber(advancedInputs.walletSize),
-   const advancedNumbers = useMemo(() => parseAdvancedInputs(advancedInputs), [advancedInputs])
+  const metrics = parseMetrics(text)
+  setAdvancedInputs((previous) => sanitizeParsedMetrics(previous, metrics))
 
-  )
+  setOcrStatus('done')
+  setOcrProgress(100)
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err)
+  setOcrError(message)
+  errorMessages.push(`AI extraction failed. ${message} (falling back to on-device OCR if possible).`)
+  setOcrStatus('error')
+} finally {
+  if (inputElement) inputElement.value = ''
+}
 
-  const { combinedProfit, advancedDistribution, winRate, lossRate, profitPerTrade, roi } = useMemo(
-    () => calculateAdvancedMetrics(advancedNumbers, normalizedWeights),
-    [advancedNumbers, normalizedWeights],
-  )
 
+    const pick = (...candidates) => {
+      for (const candidate of candidates) {
+        if (candidate === undefined || candidate === null) {
+          continue
+        }
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+          return String(candidate)
+        }
+        if (typeof candidate === 'string') {
+          const trimmed = candidate.trim()
+          if (trimmed) {
+            return trimmed
+          }
+        }
+      }
+      return ''
+    }
+
+    const advanced = {}
+    const walletSize = pick(payload.walletSize, payload.wallet_balance, payload.balance, payload.wallet_size)
+    if (walletSize !== '') {
+      advanced.walletSize = walletSize
+    }
+    const realizedPnl = pick(
+      payload.realizedPnl,
+      payload.realized_pnl,
+      payload.realizedProfit,
+      payload.realized_profit,
+      payload.pnl,
+    )
+    if (realizedPnl !== '') {
+      advanced.pnl = realizedPnl
+    }
+    const unrealizedPnl = pick(
+      payload.unrealizedPnl,
+      payload.unrealized_pnl,
+      payload.unrealizedProfit,
+      payload.unrealized_profit,
+    )
+    if (unrealizedPnl !== '') {
+      advanced.unrealizedPnl = unrealizedPnl
+    }
+    const totalTrades = pick(payload.totalTrades, payload.total_trades, payload.tradeCount, payload.tradesTotal)
+    if (totalTrades !== '') {
+      advanced.totalTrades = totalTrades
+    }
+    const winTrades = pick(payload.winTrades, payload.win_trades, payload.winningTrades, payload.wins)
+    if (winTrades !== '') {
+      advanced.winTrades = winTrades
+    }
+    const lossTrades = pick(payload.lossTrades, payload.loss_trades, payload.losingTrades, payload.losses)
+    if (lossTrades !== '') {
+      advanced.lossTrades = lossTrades
+    }
+    const snapshotDate = pick(payload.snapshotDate, payload.snapshot_date, payload.date, payload.reportDate)
+    if (snapshotDate !== '') {
+      advanced.date = snapshotDate
+    }
+    const extraction = { advanced }
+    const carryValue = pick(
+      payload.carryPercent,
+      payload.carry_percent,
+      payload.carry_percentage,
+      payload.carryPercentDecimal,
+      payload.carry,
+    )
+    if (carryValue !== '') {
+      extraction.carry = carryValue
+    }
+
+    const profitValue =
+      realizedPnl !== '' ? realizedPnl : pick(payload.profit, payload.profitInput, payload.realized_profit)
+    if (profitValue !== '') {
+      extraction.profit = profitValue
+    }
+
+    return extraction
+  }
+
+  const applyExtractionResult = (extraction) => {
+    if (!extraction) {
+      return
+    }
+
+    const { advanced: advancedUpdates = {}, profit, carry } = extraction
+    const sanitizedAdvanced = {}
+    let sanitizedCarry = ''
+
+    Object.entries(advancedUpdates).forEach(([key, rawValue]) => {
+      if (rawValue === undefined || rawValue === null) {
+        return
+      }
+
+      if (key === 'carry') {
+        const numeric = Number(rawValue)
+        if (!Number.isNaN(numeric)) {
+          const clamped = clamp(numeric, 0, 100)
+          sanitizedCarry = String(clamped)
+          sanitizedAdvanced.carry = sanitizedCarry
+        }
+        return
+      }
+
+      const valueString =
+        typeof rawValue === 'number' && Number.isFinite(rawValue)
+          ? String(rawValue)
+          : String(rawValue).trim()
+      if (valueString !== '') {
+        sanitizedAdvanced[key] = valueString
+      }
+    })
+
+    if (!sanitizedCarry && carry !== undefined && carry !== null && carry !== '') {
+      const numeric = Number(carry)
+      if (!Number.isNaN(numeric)) {
+        const clamped = clamp(numeric, 0, 100)
+        sanitizedCarry = String(clamped)
+        sanitizedAdvanced.carry = sanitizedCarry
+      }
+    }
+
+    if (Object.keys(sanitizedAdvanced).length > 0) {
+      setAdvancedInputs((previous) => {
+        const next = { ...previous }
+        Object.entries(sanitizedAdvanced).forEach(([key, value]) => {
+          next[key] = value
+        })
+        return next
+      })
+    }
+
+    const profitSource =
+      profit !== undefined && profit !== null && profit !== ''
+        ? profit
+        : sanitizedAdvanced.pnl
+
+    if (profitSource !== undefined && profitSource !== null && profitSource !== '') {
+      const numeric = Number(profitSource)
+      if (!Number.isNaN(numeric)) {
+        const normalized = Math.max(0, numeric)
+        setProfitInput(String(normalized))
+      }
+    }
+
+    if (sanitizedCarry) {
+      setCarryInput(sanitizedCarry)
+    }
+  }
+
+ main
 
   const handleOcrUpload = async (event) => {
     const inputElement = event.target
@@ -839,61 +955,72 @@ codex/add-weights,-alloc,-and-fees-modules
     setOcrError('')
     setOcrText('')
 
+    const errorMessages = []
+
     try {
-      const text = await runOcr(file, {
-        onProgress: (progress) => {
-          if (typeof progress === 'number') {
-            setOcrProgress(Math.round(progress * 100))
-          }
-        },
-      })
+// --- Replace the whole conflicted region (724–845) with this:
 
-      setOcrText(text)
-      const metrics = parseMetrics(text)
+setOcrProgress(0)
+setOcrStatus('working')
+setOcrError('')
+setAiReport('')
 
-      setAdvancedInputs((previous) => {
-        const next = { ...previous }
-        if (metrics.walletSize != null) {
-          next.walletSize = String(metrics.walletSize)
-        }
-        if (metrics.pnl != null) {
-          next.pnl = String(metrics.pnl)
-        }
-        if (metrics.unrealizedPnl != null) {
-          next.unrealizedPnl = String(metrics.unrealizedPnl)
-        }
-        if (metrics.totalTrades != null) {
-          next.totalTrades = String(metrics.totalTrades)
-        }
-        if (metrics.winTrades != null) {
-          next.winTrades = String(metrics.winTrades)
-        }
-        if (metrics.lossTrades != null) {
-          next.lossTrades = String(metrics.lossTrades)
-        }
-        if (metrics.date) {
-          next.date = metrics.date
-        }
-        if (metrics.carry != null) {
-          const carryValue = clamp(metrics.carry, 0, 100)
-          next.carry = String(carryValue)
-        }
-        return next
-      })
+let text = ''
 
-      if (metrics.pnl != null) {
-        const pnlValue = Math.max(0, metrics.pnl)
-        setProfitInput(String(pnlValue))
-      }
-
-      if (metrics.carry != null) {
-        const carryValue = clamp(metrics.carry, 0, 100)
-        setCarryInput(String(carryValue))
-      }
-
-      setOcrProgress(100)
+try {
+  if (useAiVision) {
+    if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
+      errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
+    } else {
+      const mapped = await llmVisionExtractFromImage(file, aiConfig)
+      applyExtractionResult(mapped)
       setOcrStatus('done')
-    } catch (error) {
+      setOcrProgress(100)
+      // AI may already have provided structured results; we still keep `text` empty to trigger OCR fallback only if needed
+    }
+  }
+
+  // Fallback to on-device OCR if we don't yet have raw text (or if useAiVision is off)
+  if (!text) {
+    const result = await runOcr(file, {
+      onProgress: (p) => {
+        if (typeof p === 'number') setOcrProgress(Math.round(p * 100))
+      },
+      logger: (msg) => {
+        if (msg.status === 'recognizing text') {
+          setOcrProgress(Math.round((msg.progress || 0) * 100))
+        }
+      }
+    })
+    text = result?.data?.text ?? (typeof result === 'string' ? result : '')
+  }
+
+  if (!text || !text.trim()) {
+    setOcrText('')
+    setOcrStatus('done')
+    return
+  }
+
+  setOcrText(text)
+
+  // Heuristic extraction first (quick wins), then metrics parser for full detail
+  const heuristic = extractAdvancedFields(text)
+  applyExtractionResult({ advanced: heuristic })
+
+  const metrics = parseMetrics(text)
+  setAdvancedInputs((previous) => sanitizeParsedMetrics(previous, metrics))
+
+  setOcrStatus('done')
+  setOcrProgress(100)
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err)
+  setOcrError(message)
+  errorMessages.push(`AI extraction failed. ${message} (falling back to on-device OCR if possible).`)
+  setOcrStatus('error')
+} finally {
+  if (inputElement) inputElement.value = ''
+}
+
       setOcrStatus('error')
       setOcrError(error instanceof Error ? error.message : 'Failed to process the screenshot')
     } finally {
@@ -927,12 +1054,17 @@ codex/add-weights,-alloc,-and-fees-modules
   }
 
   const handleGenerateReport = async () => {
-    if (!aiKey) {
+    if (!aiConfig.apiKey) {
       setAiError('An API key is required to generate the executive report.')
       return
     }
 
-    const endpoint = buildCompletionsUrl(aiBaseUrl)
+    if (!aiConfig.model) {
+      setAiError('Provide a valid model for the AI provider.')
+      return
+    }
+
+    const endpoint = buildCompletionsUrl(aiConfig.baseUrl)
     if (!endpoint) {
       setAiError('Provide a valid base URL for the AI provider.')
       return
@@ -984,7 +1116,7 @@ codex/add-weights,-alloc,-and-fees-modules
     }
 
     const payload = {
-      model: aiModel,
+      model: aiConfig.model,
       messages: [
         {
           role: 'system',
@@ -1014,7 +1146,7 @@ codex/add-weights,-alloc,-and-fees-modules
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${aiKey}`,
+          Authorization: `Bearer ${aiConfig.apiKey}`,
         },
         body: JSON.stringify(payload),
       })
@@ -1336,6 +1468,34 @@ codex/add-weights,-alloc,-and-fees-modules
               Drop a Figment dashboard screenshot to automatically extract wallet size, PnL, trade counts, and carry. All OCR runs in the
               browser via Tesseract.js.
             </p>
+            <div className="ai-options" role="group" aria-label="AI extraction options">
+              <label className="ai-toggle">
+                <input
+                  type="checkbox"
+                  checked={useAiVision}
+                  onChange={(event) => setUseAiVision(event.target.checked)}
+                />
+                <span>
+                  <strong>Use AI vision extraction</strong>
+                  <span className="muted">
+                    Skip on-device OCR and let your BYOK model extract structured values directly from the screenshot.
+                  </span>
+                </span>
+              </label>
+              <label className="ai-toggle">
+                <input
+                  type="checkbox"
+                  checked={useAiExtraction}
+                  onChange={(event) => setUseAiExtraction(event.target.checked)}
+                />
+                <span>
+                  <strong>Enhance OCR with AI JSON mode</strong>
+                  <span className="muted">
+                    Run Tesseract locally, then merge any non-null fields returned by your BYOK chat model.
+                  </span>
+                </span>
+              </label>
+            </div>
             <label className={`upload-zone ${ocrStatus === 'processing' ? 'uploading' : ''}`}>
               <input type="file" accept="image/*" onChange={handleOcrUpload} />
               <span>
