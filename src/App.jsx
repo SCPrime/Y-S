@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
-import { runOcr, parseMetrics, sanitizeParsedMetrics, initialAdvancedInputs } from './lib/ocr'
+codex/expand-parsedate-for-new-regex-patterns
+import Tesseract from 'tesseract.js'
+import { useEffect, useMemo, useState } from 'react'
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr'
 import './App.css'
-codex/add-ai-extraction-and-vision-support
- codex/add-ai-extraction-and-vision-support
+import { normalizeWeightInputs } from './lib/weights'
+import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs } from './lib/alloc'
+
+// weights used by the scenarios UI
+const WEIGHTS = {
+  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
+  deployed:    { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
+}
+
 import { llmOcrTextExtract, llmVisionExtractFromImage } from './lib/ai'
 
 
 codex/create-image-preprocessing-and-metrics-parser
 import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr.js'
  main
-=======
+
 import { useEffect, useMemo, useState } from 'react'
 import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr'
 import './App.css'
@@ -21,10 +31,15 @@ import { applyFees } from './lib/fees'
 
 // weights used by the scenarios UI
 main
+main
 const WEIGHTS = {
   notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
   deployed:    { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
 }
+codex/expand-parsedate-for-new-regex-patterns
+
+
+main
 
 
 const PARTIES = [
@@ -151,12 +166,171 @@ const formatPercent = (value) => percentFormatter.format(value)
 const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
+codex/expand-parsedate-for-new-regex-patterns
+codex/expand-parsedate-for-new-regex-patterns
+const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
+
+const calcSplit = (profit, carryPct, scenarioKey) => {
+  const weights = getWeights(scenarioKey)
+  const carry = (carryPct || 0) / 100
+  const founders = profit * (weights.F + carry * (weights.L + weights.D))
+  const laura = profit * ((1 - carry) * weights.L)
+  const damon = profit * ((1 - carry) * weights.D)
+  const total = founders + laura + damon
+
+  return { founders, laura, damon, total, weights }
+}
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const normalizeMagnitude = (raw) => {
+  if (!raw) return ''
+  const trimmed = raw.trim()
+  const magnitudeMatch = trimmed.match(/([kKmM])$/)
+  const isNegative = trimmed.startsWith('(') && trimmed.endsWith(')')
+  const sanitized = trimmed.replace(/[^0-9.+-]/g, '')
+  if (!sanitized) return ''
+  let numeric = Number(sanitized)
+  if (Number.isNaN(numeric)) return ''
+  if (isNegative && numeric > 0) {
+    numeric *= -1
+  }
+  if (!magnitudeMatch) {
+    return String(numeric)
+  }
+  const mag = magnitudeMatch[1].toLowerCase()
+  const multiplier = mag === 'k' ? 1_000 : 1_000_000
+  return String(numeric * multiplier)
+}
+
+const numericTokenRegex = /([-+]?[$]?\d[\d,]*(?:\.\d+)?(?:\s?[kKmM])?)/
+const percentTokenRegex = /([-+]?\d+(?:\.\d+)?)\s*%/
+
+const parseLabeledNumber = (text, labels) => {
+  const lines = text.split(/\r?\n/).map((line) => line.trim())
+
+  for (const label of labels) {
+    const labelLower = label.toLowerCase()
+    for (let index = 0; index < lines.length; index += 1) {
+      const current = lines[index]
+      const currentLower = current.toLowerCase()
+      if (!currentLower.includes(labelLower)) {
+        continue
+      }
+      const inlineMatch = current.match(numericTokenRegex)
+      if (inlineMatch?.[1]) {
+        const normalized = normalizeMagnitude(inlineMatch[1])
+        if (normalized) return normalized
+      }
+      const nextLine = lines[index + 1]
+      if (nextLine) {
+        const nextMatch = nextLine.match(numericTokenRegex)
+        if (nextMatch?.[1]) {
+          const normalized = normalizeMagnitude(nextMatch[1])
+          if (normalized) return normalized
+        }
+      }
+    }
+  }
+
+  for (const label of labels) {
+    const regex = new RegExp(`\\b${escapeRegex(label)}\\b[\\s:=\u2013-]*${numericTokenRegex.source}`, 'i')
+    const match = regex.exec(text)
+    if (match?.[1]) {
+      const normalized = normalizeMagnitude(match[1])
+      if (normalized) return normalized
+    }
+  }
+
+  return ''
+}
+
+const parsePercentage = (text, labels) => {
+  const lines = text.split(/\r?\n/).map((line) => line.trim())
+
+  for (const label of labels) {
+    const labelLower = label.toLowerCase()
+    for (let index = 0; index < lines.length; index += 1) {
+      const current = lines[index]
+      const currentLower = current.toLowerCase()
+      if (!currentLower.includes(labelLower)) {
+        continue
+      }
+      const inlineMatch = current.match(percentTokenRegex)
+      if (inlineMatch?.[1]) {
+        return inlineMatch[1]
+      }
+      const nextLine = lines[index + 1]
+      if (nextLine) {
+        const nextMatch = nextLine.match(percentTokenRegex)
+        if (nextMatch?.[1]) {
+          return nextMatch[1]
+        }
+      }
+    }
+  }
+
+  for (const label of labels) {
+    const regex = new RegExp(`\\b${escapeRegex(label)}\\b[\\s:=\u2013-]*${percentTokenRegex.source}`, 'i')
+    const match = regex.exec(text)
+    if (match?.[1]) {
+      return match[1]
+    }
+  }
+
+  return ''
+}
+
+const extractAdvancedFields = (text) => {
+  if (!text) {
+    return initialAdvancedInputs
+  }
+
+  const normalizedText = text.replace(/\r?\n/g, '\n')
+
+  const walletSize = parseLabeledNumber(normalizedText, [
+    'wallet size',
+    'wallet balance',
+    'wallet',
+  ])
+  const pnl = parseLabeledNumber(normalizedText, [
+    'realized pnl',
+    'net pnl',
+    'pnl',
+    'p/l',
+    'profit',
+  ])
+  const unrealizedPnl = parseLabeledNumber(normalizedText, [
+    'unrealized pnl',
+    'unrealized p/l',
+    'unrealized',
+  ])
+  const totalTrades = parseLabeledNumber(normalizedText, [
+    'total trades',
+    'trades total',
+    'trade count',
+    'trades',
+  ])
+  const winTrades = parseLabeledNumber(normalizedText, [
+    'win trades',
+    'winning trades',
+    'wins',
+  ])
+  const lossTrades = parseLabeledNumber(normalizedText, [
+    'loss trades',
+    'losing trades',
+    'losses',
+  ])
+  const carryRaw = parsePercentage(normalizedText, ['carry', 'carry %', 'carry percent'])
+  const carry = carryRaw ? String(clamp(Number(carryRaw) || 0, 0, 100)) : ''
+  const date = parseDate(normalizedText)
 
       }
     }
   }
 
 
+ main
 
   return {
     walletSize,
@@ -167,12 +341,20 @@ const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
     lossTrades,
     date,
     carry,
+codex/expand-parsedate-for-new-regex-patterns
+  }
+}
+
+
+main
+
     entryFee,
     managementFee,
   }
 }
 
 
+main
 const sanitizeNumericInput = (value) => {
   if (!value) return ''
   const sanitized = value.replace(/[^0-9.+-]/g, '')
@@ -340,22 +522,11 @@ function AdvancedFieldsSection({
           <label htmlFor="managementFee">Management fee (%)</label>
           <input
             id="managementFee"
-            name="managementFee"
-            type="text"
-            inputMode="decimal"
-            value={advancedInputs.managementFee}
-            onChange={onAdvancedChange}
-            onBlur={onAdvancedBlur}
-            placeholder="0"
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="reportDate">Snapshot date</label>
-          <input
-            id="reportDate"
-            name="date"
-            type="text"
-            value={advancedInputs.date}
+const advancedNumbers = useMemo(
+  () => parseAdvancedInputs(advancedInputs),
+  [advancedInputs],
+)
+
             onChange={onAdvancedChange}
             onBlur={onAdvancedBlur}
             placeholder="2025-01-18"
