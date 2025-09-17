@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import Tesseract from 'tesseract.js'
+import { runOcr, parseMetrics, sanitizeParsedMetrics, initialAdvancedInputs } from './lib/ocr'
 import './App.css'
+ codex/add-ai-extraction-and-vision-support
 import { llmOcrTextExtract, llmVisionExtractFromImage } from './lib/ai'
 
+
+codex/create-image-preprocessing-and-metrics-parser
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr.js'
+ main
 const WEIGHTS = {
-  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
-  deployed: { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
-}
+ 
+import { normalizeWeightInputs } from './lib/weights.js'
+import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs } from './lib/alloc.js'
+
 
 const PARTIES = [
   { key: 'founders', label: 'Founders (Yoni+Spence)', className: 'founders' },
@@ -102,190 +108,6 @@ const formatPercent = (value) => percentFormatter.format(value)
 const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
-
-const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
-
-const calcSplit = (profit, carryPct, scenarioKey) => {
-  const weights = getWeights(scenarioKey)
-  const carry = (carryPct || 0) / 100
-  const founders = profit * (weights.F + carry * (weights.L + weights.D))
-  const laura = profit * ((1 - carry) * weights.L)
-  const damon = profit * ((1 - carry) * weights.D)
-  const total = founders + laura + damon
-
-  return { founders, laura, damon, total, weights }
-}
-
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-const normalizeMagnitude = (raw) => {
-  if (!raw) return ''
-  const trimmed = raw.trim()
-  const magnitudeMatch = trimmed.match(/([kKmM])$/)
-  const isNegative = trimmed.startsWith('(') && trimmed.endsWith(')')
-  const sanitized = trimmed.replace(/[^0-9.+-]/g, '')
-  if (!sanitized) return ''
-  let numeric = Number(sanitized)
-  if (Number.isNaN(numeric)) return ''
-  if (isNegative && numeric > 0) {
-    numeric *= -1
-  }
-  if (!magnitudeMatch) {
-    return String(numeric)
-  }
-  const mag = magnitudeMatch[1].toLowerCase()
-  const multiplier = mag === 'k' ? 1_000 : 1_000_000
-  return String(numeric * multiplier)
-}
-
-const numericTokenRegex = /([-+]?[$]?\d[\d,]*(?:\.\d+)?(?:\s?[kKmM])?)/
-const percentTokenRegex = /([-+]?\d+(?:\.\d+)?)\s*%/
-
-const parseLabeledNumber = (text, labels) => {
-  const lines = text.split(/\r?\n/).map((line) => line.trim())
-
-  for (const label of labels) {
-    const labelLower = label.toLowerCase()
-    for (let index = 0; index < lines.length; index += 1) {
-      const current = lines[index]
-      const currentLower = current.toLowerCase()
-      if (!currentLower.includes(labelLower)) {
-        continue
-      }
-      const inlineMatch = current.match(numericTokenRegex)
-      if (inlineMatch?.[1]) {
-        const normalized = normalizeMagnitude(inlineMatch[1])
-        if (normalized) return normalized
-      }
-      const nextLine = lines[index + 1]
-      if (nextLine) {
-        const nextMatch = nextLine.match(numericTokenRegex)
-        if (nextMatch?.[1]) {
-          const normalized = normalizeMagnitude(nextMatch[1])
-          if (normalized) return normalized
-        }
-      }
-    }
-  }
-
-  for (const label of labels) {
-    const regex = new RegExp(`\\b${escapeRegex(label)}\\b[\\s:=\u2013-]*${numericTokenRegex.source}`, 'i')
-    const match = regex.exec(text)
-    if (match?.[1]) {
-      const normalized = normalizeMagnitude(match[1])
-      if (normalized) return normalized
-    }
-  }
-
-  return ''
-}
-
-const parsePercentage = (text, labels) => {
-  const lines = text.split(/\r?\n/).map((line) => line.trim())
-
-  for (const label of labels) {
-    const labelLower = label.toLowerCase()
-    for (let index = 0; index < lines.length; index += 1) {
-      const current = lines[index]
-      const currentLower = current.toLowerCase()
-      if (!currentLower.includes(labelLower)) {
-        continue
-      }
-      const inlineMatch = current.match(percentTokenRegex)
-      if (inlineMatch?.[1]) {
-        return inlineMatch[1]
-      }
-      const nextLine = lines[index + 1]
-      if (nextLine) {
-        const nextMatch = nextLine.match(percentTokenRegex)
-        if (nextMatch?.[1]) {
-          return nextMatch[1]
-        }
-      }
-    }
-  }
-
-  for (const label of labels) {
-    const regex = new RegExp(`\\b${escapeRegex(label)}\\b[\\s:=\u2013-]*${percentTokenRegex.source}`, 'i')
-    const match = regex.exec(text)
-    if (match?.[1]) {
-      return match[1]
-    }
-  }
-
-  return ''
-}
-
-const parseDate = (text) => {
-  const iso = text.match(/\b\d{4}-\d{2}-\d{2}\b/)
-  if (iso) return iso[0]
-
-  const slash = text.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/)
-  if (slash) return slash[0]
-
-  const month = text.match(
-    /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{2,4}\b/i,
-  )
-  if (month) return month[0]
-
-  return ''
-}
-
-const extractAdvancedFields = (text) => {
-  if (!text) {
-    return initialAdvancedInputs
-  }
-
-  const normalizedText = text.replace(/\r?\n/g, '\n')
-
-  const walletSize = parseLabeledNumber(normalizedText, [
-    'wallet size',
-    'wallet balance',
-    'wallet',
-  ])
-  const pnl = parseLabeledNumber(normalizedText, [
-    'realized pnl',
-    'net pnl',
-    'pnl',
-    'p/l',
-    'profit',
-  ])
-  const unrealizedPnl = parseLabeledNumber(normalizedText, [
-    'unrealized pnl',
-    'unrealized p/l',
-    'unrealized',
-  ])
-  const totalTrades = parseLabeledNumber(normalizedText, [
-    'total trades',
-    'trades total',
-    'trade count',
-    'trades',
-  ])
-  const winTrades = parseLabeledNumber(normalizedText, [
-    'win trades',
-    'winning trades',
-    'wins',
-  ])
-  const lossTrades = parseLabeledNumber(normalizedText, [
-    'loss trades',
-    'losing trades',
-    'losses',
-  ])
-  const carryRaw = parsePercentage(normalizedText, ['carry', 'carry %', 'carry percent'])
-  const carry = carryRaw ? String(clamp(Number(carryRaw) || 0, 0, 100)) : ''
-  const date = parseDate(text)
-
-  return {
-    walletSize,
-    pnl,
-    unrealizedPnl,
-    totalTrades,
-    winTrades,
-    lossTrades,
-    date,
-    carry,
-  }
-}
 
 const sanitizeNumericInput = (value) => {
   if (!value) return ''
@@ -710,48 +532,18 @@ function App() {
   }
   const scenarioDetails = SCENARIOS.find((option) => option.key === scenario) ?? SCENARIOS[0]
 
+codex/create-image-preprocessing-and-metrics-parser
   const advancedNumbers = useMemo(
     () => ({
-      walletSize: Number(advancedInputs.walletSize) || 0,
-      pnl: Number(advancedInputs.pnl) || 0,
-      unrealizedPnl: Number(advancedInputs.unrealizedPnl) || 0,
-      totalTrades: Number(advancedInputs.totalTrades) || 0,
-      winTrades: Number(advancedInputs.winTrades) || 0,
-      lossTrades: Number(advancedInputs.lossTrades) || 0,
-      carry: Number(advancedInputs.carry) || 0,
-    }),
-    [advancedInputs],
+      walletSize: toNumber(advancedInputs.walletSize),
+   const advancedNumbers = useMemo(() => parseAdvancedInputs(advancedInputs), [advancedInputs])
+
   )
 
-  const weightNumbers = useMemo(
-    () => ({
-      founder: Math.max(0, Number(weightInputs.founder) || 0),
-      investor: Math.max(0, Number(weightInputs.investor) || 0),
-      moonbag: Math.max(0, Number(weightInputs.moonbag) || 0),
-    }),
-    [weightInputs],
+  const { combinedProfit, advancedDistribution, winRate, lossRate, profitPerTrade, roi } = useMemo(
+    () => calculateAdvancedMetrics(advancedNumbers, normalizedWeights),
+    [advancedNumbers, normalizedWeights],
   )
-
-  const weightSum = weightNumbers.founder + weightNumbers.investor + weightNumbers.moonbag
-  const normalizedWeights = weightSum > 0
-    ? {
-        founder: weightNumbers.founder / weightSum,
-        investor: weightNumbers.investor / weightSum,
-        moonbag: weightNumbers.moonbag / weightSum,
-      }
-    : { founder: 0, investor: 0, moonbag: 0 }
-
-  const combinedProfit = advancedNumbers.pnl + advancedNumbers.unrealizedPnl
-  const advancedDistribution = {
-    founder: combinedProfit * normalizedWeights.founder,
-    investor: combinedProfit * normalizedWeights.investor,
-    moonbag: combinedProfit * normalizedWeights.moonbag,
-  }
-
-  const winRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.winTrades / advancedNumbers.totalTrades : 0
-  const lossRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.lossTrades / advancedNumbers.totalTrades : 0
-  const profitPerTrade = advancedNumbers.totalTrades > 0 ? advancedNumbers.pnl / advancedNumbers.totalTrades : 0
-  const roi = advancedNumbers.walletSize > 0 ? combinedProfit / advancedNumbers.walletSize : 0
 
   const mapAiResultToExtraction = (payload) => {
     if (!payload || typeof payload !== 'object') {
@@ -929,72 +721,69 @@ function App() {
     const errorMessages = []
 
     try {
-      if (useAiVision) {
-        if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
-          errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
-        } else {
-          try {
-            const visionExtraction = await llmVisionExtractFromImage(file, aiConfig)
-            const mappedVision = mapAiResultToExtraction(visionExtraction)
-            applyExtractionResult(mappedVision)
-            if (errorMessages.length > 0) {
-              setOcrError(errorMessages.join(' '))
-              setOcrStatus('error')
-            } else {
-              setOcrStatus('done')
-            }
-            return
-          } catch (visionError) {
-            const message =
-              visionError instanceof Error ? visionError.message : 'Vision extraction failed.'
-            errorMessages.push(`${message} Falling back to on-device OCR.`)
-          }
+// --- Replace the whole conflicted region (724–845) with this:
+
+setOcrProgress(0)
+setOcrStatus('working')
+setOcrError('')
+setAiReport('')
+
+let text = ''
+
+try {
+  if (useAiVision) {
+    if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
+      errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
+    } else {
+      const mapped = await llmVisionExtractFromImage(file, aiConfig)
+      applyExtractionResult(mapped)
+      setOcrStatus('done')
+      setOcrProgress(100)
+      // AI may already have provided structured results; we still keep `text` empty to trigger OCR fallback only if needed
+    }
+  }
+
+  // Fallback to on-device OCR if we don't yet have raw text (or if useAiVision is off)
+  if (!text) {
+    const result = await runOcr(file, {
+      onProgress: (p) => {
+        if (typeof p === 'number') setOcrProgress(Math.round(p * 100))
+      },
+      logger: (msg) => {
+        if (msg.status === 'recognizing text') {
+          setOcrProgress(Math.round((msg.progress || 0) * 100))
         }
       }
+    })
+    text = result?.data?.text ?? (typeof result === 'string' ? result : '')
+  }
 
-      const result = await Tesseract.recognize(file, 'eng', {
-        logger: (message) => {
-          if (message.status === 'recognizing text') {
-            setOcrProgress(Math.round((message.progress || 0) * 100))
-          }
-        },
-      })
+  if (!text || !text.trim()) {
+    setOcrText('')
+    setOcrStatus('done')
+    return
+  }
 
-      const text = result.data.text ?? ''
-      if (text.trim()) {
-        setOcrText(text)
-      }
+  setOcrText(text)
 
-      const heuristicExtraction = extractAdvancedFields(text)
-      applyExtractionResult({ advanced: heuristicExtraction })
+  // Heuristic extraction first (quick wins), then metrics parser for full detail
+  const heuristic = extractAdvancedFields(text)
+  applyExtractionResult({ advanced: heuristic })
 
-      if (useAiExtraction) {
-        if (!text.trim()) {
-          errorMessages.push('AI extraction skipped because no OCR text was recognized.')
-        } else if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
-          errorMessages.push('AI extraction requires a valid API key, base URL, and model.')
-        } else {
-          try {
-            const aiExtraction = await llmOcrTextExtract(text, aiConfig)
-            const mappedAi = mapAiResultToExtraction(aiExtraction)
-            applyExtractionResult(mappedAi)
-          } catch (aiErrorInstance) {
-            const message =
-              aiErrorInstance instanceof Error
-                ? aiErrorInstance.message
-                : 'AI extraction failed.'
-            errorMessages.push(`${message} Showing heuristic OCR results.`)
-          }
-        }
-      }
+  const metrics = parseMetrics(text)
+  setAdvancedInputs((previous) => sanitizeParsedMetrics(previous, metrics))
 
-      if (errorMessages.length > 0) {
-        setOcrError(errorMessages.join(' '))
-        setOcrStatus('error')
-      } else {
-        setOcrStatus('done')
-      }
-    } catch (error) {
+  setOcrStatus('done')
+  setOcrProgress(100)
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err)
+  setOcrError(message)
+  errorMessages.push(`AI extraction failed. ${message} (falling back to on-device OCR if possible).`)
+  setOcrStatus('error')
+} finally {
+  if (inputElement) inputElement.value = ''
+}
+
       setOcrStatus('error')
       setOcrError(error instanceof Error ? error.message : 'Failed to process the screenshot')
     } finally {

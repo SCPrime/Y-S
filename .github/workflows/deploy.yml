@@ -3,6 +3,8 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -44,6 +46,14 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
+      - name: Lint
+        working-directory: ${{ steps.wd.outputs.dir }}
+        run: npm run lint --if-present
+
+      - name: Test
+        working-directory: ${{ steps.wd.outputs.dir }}
+        run: npm test --if-present
+
       - name: Build
         working-directory: ${{ steps.wd.outputs.dir }}
         run: npm run build
@@ -68,6 +78,7 @@ jobs:
           path: ${{ steps.wd.outputs.dir }}/${{ steps.out.outputs.dir }}
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
