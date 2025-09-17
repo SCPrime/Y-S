@@ -1,9 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
-import Tesseract from 'tesseract.js'
+import { runOcr, parseMetrics, sanitizeParsedMetrics, initialAdvancedInputs } from './lib/ocr'
 import './App.css'
-import { computeCapitalDayWeights, normalizeClasses } from './lib/weights'
-import { allocateProfit, computeMoonshotDistribution } from './lib/alloc'
+import { useEffect, useMemo, useState } from 'react'
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr'
+import './App.css'
+
+// weights + allocation helpers
+import { normalizeWeightInputs, computeCapitalDayWeights, normalizeClasses } from './lib/weights'
+import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs, allocateProfit, computeMoonshotDistribution } from './lib/alloc'
 import { applyFees } from './lib/fees'
+
+// weights used by the scenarios UI
+const WEIGHTS = {
+  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
+  deployed:    { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
+}
+
 
 const PARTIES = [
   { key: 'founders', label: 'Founders (Yoni+Spence)', className: 'founders' },
@@ -130,174 +142,11 @@ const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
 
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-const normalizeMagnitude = (raw) => {
-  if (!raw) return ''
-  const trimmed = raw.trim()
-  const magnitudeMatch = trimmed.match(/([kKmM])$/)
-  const isNegative = trimmed.startsWith('(') && trimmed.endsWith(')')
-  const sanitized = trimmed.replace(/[^0-9.+-]/g, '')
-  if (!sanitized) return ''
-  let numeric = Number(sanitized)
-  if (Number.isNaN(numeric)) return ''
-  if (isNegative && numeric > 0) {
-    numeric *= -1
-  }
-  if (!magnitudeMatch) {
-    return String(numeric)
-  }
-  const mag = magnitudeMatch[1].toLowerCase()
-  const multiplier = mag === 'k' ? 1_000 : 1_000_000
-  return String(numeric * multiplier)
-}
-
-const numericTokenRegex = /([-+]?[$]?\d[\d,]*(?:\.\d+)?(?:\s?[kKmM])?)/
-const percentTokenRegex = /([-+]?\d+(?:\.\d+)?)\s*%/
-
-const parseLabeledNumber = (text, labels) => {
-  const lines = text.split(/\r?\n/).map((line) => line.trim())
-
-  for (const label of labels) {
-    const labelLower = label.toLowerCase()
-    for (let index = 0; index < lines.length; index += 1) {
-      const current = lines[index]
-      const currentLower = current.toLowerCase()
-      if (!currentLower.includes(labelLower)) {
-        continue
-      }
-      const inlineMatch = current.match(numericTokenRegex)
-      if (inlineMatch?.[1]) {
-        const normalized = normalizeMagnitude(inlineMatch[1])
-        if (normalized) return normalized
-      }
-      const nextLine = lines[index + 1]
-      if (nextLine) {
-        const nextMatch = nextLine.match(numericTokenRegex)
-        if (nextMatch?.[1]) {
-          const normalized = normalizeMagnitude(nextMatch[1])
-          if (normalized) return normalized
-        }
       }
     }
   }
 
-  for (const label of labels) {
-    const regex = new RegExp(`\\b${escapeRegex(label)}\\b[\\s:=\u2013-]*${numericTokenRegex.source}`, 'i')
-    const match = regex.exec(text)
-    if (match?.[1]) {
-      const normalized = normalizeMagnitude(match[1])
-      if (normalized) return normalized
-    }
-  }
 
-  return ''
-}
-
-const parsePercentage = (text, labels) => {
-  const lines = text.split(/\r?\n/).map((line) => line.trim())
-
-  for (const label of labels) {
-    const labelLower = label.toLowerCase()
-    for (let index = 0; index < lines.length; index += 1) {
-      const current = lines[index]
-      const currentLower = current.toLowerCase()
-      if (!currentLower.includes(labelLower)) {
-        continue
-      }
-      const inlineMatch = current.match(percentTokenRegex)
-      if (inlineMatch?.[1]) {
-        return inlineMatch[1]
-      }
-      const nextLine = lines[index + 1]
-      if (nextLine) {
-        const nextMatch = nextLine.match(percentTokenRegex)
-        if (nextMatch?.[1]) {
-          return nextMatch[1]
-        }
-      }
-    }
-  }
-
-  for (const label of labels) {
-    const regex = new RegExp(`\\b${escapeRegex(label)}\\b[\\s:=\u2013-]*${percentTokenRegex.source}`, 'i')
-    const match = regex.exec(text)
-    if (match?.[1]) {
-      return match[1]
-    }
-  }
-
-  return ''
-}
-
-const parseDate = (text) => {
-  const iso = text.match(/\b\d{4}-\d{2}-\d{2}\b/)
-  if (iso) return iso[0]
-
-  const slash = text.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/)
-  if (slash) return slash[0]
-
-  const month = text.match(
-    /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{2,4}\b/i,
-  )
-  if (month) return month[0]
-
-  return ''
-}
-
-const extractAdvancedFields = (text) => {
-  if (!text) {
-    return initialAdvancedInputs
-  }
-
-  const normalizedText = text.replace(/\r?\n/g, '\n')
-
-  const walletSize = parseLabeledNumber(normalizedText, [
-    'wallet size',
-    'wallet balance',
-    'wallet',
-  ])
-  const pnl = parseLabeledNumber(normalizedText, [
-    'realized pnl',
-    'net pnl',
-    'pnl',
-    'p/l',
-    'profit',
-  ])
-  const unrealizedPnl = parseLabeledNumber(normalizedText, [
-    'unrealized pnl',
-    'unrealized p/l',
-    'unrealized',
-  ])
-  const totalTrades = parseLabeledNumber(normalizedText, [
-    'total trades',
-    'trades total',
-    'trade count',
-    'trades',
-  ])
-  const winTrades = parseLabeledNumber(normalizedText, [
-    'win trades',
-    'winning trades',
-    'wins',
-  ])
-  const lossTrades = parseLabeledNumber(normalizedText, [
-    'loss trades',
-    'losing trades',
-    'losses',
-  ])
-  const carryRaw = parsePercentage(normalizedText, ['carry', 'carry %', 'carry percent'])
-  const carry = carryRaw ? String(clamp(Number(carryRaw) || 0, 0, 100)) : ''
-  const entryFeeRaw = parsePercentage(normalizedText, ['entry fee', 'entry %', 'entry percent'])
-  const managementFeeRaw = parsePercentage(normalizedText, [
-    'management fee',
-    'mgmt fee',
-    'management %',
-  ])
-  const entryFee = entryFeeRaw ? String(clamp(Number(entryFeeRaw) || 0, 0, 100)) : ''
-  const managementFee = managementFeeRaw
-    ? String(clamp(Number(managementFeeRaw) || 0, 0, 100))
-    : ''
-  const date = parseDate(text)
 
   return {
     walletSize,
@@ -312,6 +161,7 @@ const extractAdvancedFields = (text) => {
     managementFee,
   }
 }
+
 
 const sanitizeNumericInput = (value) => {
   if (!value) return ''
@@ -912,8 +762,10 @@ function App() {
     damon: total > 0 ? partyValues.damon / total : 0,
   }
 
+codex/create-image-preprocessing-and-metrics-parser
   const advancedNumbers = useMemo(
     () => ({
+codex/add-weights,-alloc,-and-fees-modules
       walletSize: Math.max(0, Number(advancedInputs.walletSize) || 0),
       pnl: Number(advancedInputs.pnl) || 0,
       unrealizedPnl: Number(advancedInputs.unrealizedPnl) || 0,
@@ -957,6 +809,17 @@ function App() {
   const roi = advancedNumbers.walletSize > 0 ? combinedProfit / advancedNumbers.walletSize : 0
   const netRoi = advancedNumbers.walletSize > 0 ? netAdvancedProfit / advancedNumbers.walletSize : 0
 
+      walletSize: toNumber(advancedInputs.walletSize),
+   const advancedNumbers = useMemo(() => parseAdvancedInputs(advancedInputs), [advancedInputs])
+
+  )
+
+  const { combinedProfit, advancedDistribution, winRate, lossRate, profitPerTrade, roi } = useMemo(
+    () => calculateAdvancedMetrics(advancedNumbers, normalizedWeights),
+    [advancedNumbers, normalizedWeights],
+  )
+
+
   const handleOcrUpload = async (event) => {
     const inputElement = event.target
     const file = inputElement.files?.[0]
@@ -977,36 +840,58 @@ function App() {
     setOcrText('')
 
     try {
-      const result = await Tesseract.recognize(file, 'eng', {
-        logger: (message) => {
-          if (message.status === 'recognizing text') {
-            setOcrProgress(Math.round((message.progress || 0) * 100))
+      const text = await runOcr(file, {
+        onProgress: (progress) => {
+          if (typeof progress === 'number') {
+            setOcrProgress(Math.round(progress * 100))
           }
         },
       })
 
-      const text = result.data.text ?? ''
       setOcrText(text)
-      const extracted = extractAdvancedFields(text)
+      const metrics = parseMetrics(text)
+
       setAdvancedInputs((previous) => {
         const next = { ...previous }
-        Object.entries(extracted).forEach(([key, value]) => {
-          if (value !== '') {
-            next[key] = value
-          }
-        })
+        if (metrics.walletSize != null) {
+          next.walletSize = String(metrics.walletSize)
+        }
+        if (metrics.pnl != null) {
+          next.pnl = String(metrics.pnl)
+        }
+        if (metrics.unrealizedPnl != null) {
+          next.unrealizedPnl = String(metrics.unrealizedPnl)
+        }
+        if (metrics.totalTrades != null) {
+          next.totalTrades = String(metrics.totalTrades)
+        }
+        if (metrics.winTrades != null) {
+          next.winTrades = String(metrics.winTrades)
+        }
+        if (metrics.lossTrades != null) {
+          next.lossTrades = String(metrics.lossTrades)
+        }
+        if (metrics.date) {
+          next.date = metrics.date
+        }
+        if (metrics.carry != null) {
+          const carryValue = clamp(metrics.carry, 0, 100)
+          next.carry = String(carryValue)
+        }
         return next
       })
 
-      if (extracted.pnl) {
-        const pnlValue = Math.max(0, Number(extracted.pnl) || 0)
+      if (metrics.pnl != null) {
+        const pnlValue = Math.max(0, metrics.pnl)
         setProfitInput(String(pnlValue))
       }
 
-      if (extracted.carry) {
-        setCarryInput(extracted.carry)
+      if (metrics.carry != null) {
+        const carryValue = clamp(metrics.carry, 0, 100)
+        setCarryInput(String(carryValue))
       }
 
+      setOcrProgress(100)
       setOcrStatus('done')
     } catch (error) {
       setOcrStatus('error')
