@@ -100,11 +100,46 @@ const parseLabeledNumber = (text, labels) => {
       if (!currentLower.includes(labelLower)) {
         continue
       }
-      const inlineMatch = current.match(numericTokenRegex)
-      if (inlineMatch?.[1]) {
-        const normalized = normalizeMagnitude(inlineMatch[1])
-        if (normalized) return normalized
+      const scopedText = lines
+        .slice(Math.max(0, index - 1), index + 2)
+        .filter((value) => value && value.trim() !== '')
+        .join(' ')
+
+      const scopedMatches = Array.from(
+        scopedText.matchAll(new RegExp(numericTokenRegex.source, 'g')),
+      )
+
+      const labelPosition = scopedText.toLowerCase().indexOf(labelLower)
+      const scopedAfterLabel =
+        labelPosition >= 0
+          ? scopedMatches.filter((match) =>
+              typeof match.index === 'number' && match.index >= labelPosition,
+            )
+          : scopedMatches
+
+      const prioritizedPool = scopedAfterLabel.length > 0 ? scopedAfterLabel : scopedMatches
+
+      if (prioritizedPool.length > 0) {
+        const prioritizedMatch =
+          prioritizedPool.find((match) => {
+            const token = match[1]?.trim() ?? ''
+            if (!token) {
+              return false
+            }
+            return (
+              /[$,.-]/.test(token) ||
+              /[kKmM]$/i.test(token) ||
+              token.startsWith('+') ||
+              token.startsWith('(')
+            )
+          }) ?? prioritizedPool[0]
+
+        const normalized = normalizeMagnitude(prioritizedMatch[1])
+        if (normalized) {
+          return normalized
+        }
       }
+
       const nextLine = lines[index + 1]
       if (nextLine) {
         const nextMatch = nextLine.match(numericTokenRegex)
@@ -112,6 +147,12 @@ const parseLabeledNumber = (text, labels) => {
           const normalized = normalizeMagnitude(nextMatch[1])
           if (normalized) return normalized
         }
+      }
+
+      const inlineFallback = current.match(numericTokenRegex)
+      if (inlineFallback?.[1]) {
+        const normalized = normalizeMagnitude(inlineFallback[1])
+        if (normalized) return normalized
       }
     }
   }
@@ -164,7 +205,7 @@ const parsePercentage = (text, labels) => {
   return ''
 }
 
-const parseDateToken = (text) => {
+const parseDate = (text) => {
   const iso = text.match(/\b\d{4}-\d{2}-\d{2}\b/)
   if (iso) return iso[0]
 
@@ -221,7 +262,7 @@ export const parseMetrics = (text) => {
   ])
   const carryRaw = parsePercentage(normalizedText, ['carry', 'carry %', 'carry percent'])
   const carry = carryRaw ? String(clamp(Number(carryRaw) || 0, 0, 100)) : ''
-  const date = parseDateToken(text)
+  const date = parseDate(text)
 
   return {
     walletSize,
