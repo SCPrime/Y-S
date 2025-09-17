@@ -166,20 +166,6 @@ const formatPercent = (value) => percentFormatter.format(value)
 const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
-codex/expand-parsedate-for-new-regex-patterns
-codex/expand-parsedate-for-new-regex-patterns
-const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
-
-const calcSplit = (profit, carryPct, scenarioKey) => {
-  const weights = getWeights(scenarioKey)
-  const carry = (carryPct || 0) / 100
-  const founders = profit * (weights.F + carry * (weights.L + weights.D))
-  const laura = profit * ((1 - carry) * weights.L)
-  const damon = profit * ((1 - carry) * weights.D)
-  const total = founders + laura + damon
-
-  return { founders, laura, damon, total, weights }
-}
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -852,351 +838,220 @@ function App() {
       damonDeployed: scenarioDetailsDownload.damonDeployed,
     })
 
+    const {
+      founders: calcFounders,
+      laura: calcLaura,
+      damon: calcDamon,
+      weights: splitWeights = {},
+      breakdown: splitBreakdown = {},
+    } = calcSplit(profitValue, carryValue, scenario) ?? {}
+
+    const formatBreakdownValue = (value) => {
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value.toFixed(2) : ''
+      }
+      if (value === null || value === undefined) {
+        return ''
+      }
+      return String(value)
+    }
+
+    const formatAmount = (value, fallback) => {
+      const numeric = Number(value)
+      if (Number.isFinite(numeric)) {
+        return numeric.toFixed(2)
+      }
+      const fallbackNumeric = Number(fallback)
+      return Number.isFinite(fallbackNumeric) ? fallbackNumeric.toFixed(2) : '0.00'
+    }
+
+    const mergedWeights = {
+      F:
+        typeof splitWeights?.F === 'number'
+          ? splitWeights.F
+          : weightResult.weights?.F ?? 0,
+      L:
+        typeof splitWeights?.L === 'number'
+          ? splitWeights.L
+          : weightResult.weights?.L ?? 0,
+      D:
+        typeof splitWeights?.D === 'number'
+          ? splitWeights.D
+          : weightResult.weights?.D ?? 0,
+    }
+
+    const formattedWeights = {
+      F: formatWeightForCsv(mergedWeights.F ?? 0),
+      L: formatWeightForCsv(mergedWeights.L ?? 0),
+      D: formatWeightForCsv(mergedWeights.D ?? 0),
+    }
+
+    const fallbackBreakdown = {
+      founders: {
+        netAmount: allocationResult.parties.founders,
+        baseOrGross: allocationResult.founders?.base ?? 0,
+        preFeeAmount:
+          (allocationResult.founders?.base ?? 0) +
+          (allocationResult.founders?.routedFromDamon ?? 0) +
+          (allocationResult.carryBreakdown?.total ?? 0),
+        carryToFounders: allocationResult.carryBreakdown?.total ?? 0,
+        entryFeeComponent: 0,
+        managementFeeComponent: 0,
+      },
+      laura: {
+        netAmount: allocationResult.investorBreakdown.laura?.net ?? 0,
+        baseOrGross: allocationResult.investorBreakdown.laura?.gross ?? 0,
+        preFeeAmount: allocationResult.investorBreakdown.laura?.gross ?? 0,
+        carryToFounders: allocationResult.investorBreakdown.laura?.carry ?? 0,
+        entryFeeComponent: 0,
+        managementFeeComponent: 0,
+      },
+      damon: {
+        netAmount: allocationResult.investorBreakdown.damon?.net ?? 0,
+        baseOrGross: allocationResult.investorBreakdown.damon?.gross ?? 0,
+        preFeeAmount:
+          allocationResult.investorBreakdown.damon?.effectiveGross ??
+          allocationResult.investorBreakdown.damon?.gross ??
+          0,
+        carryToFounders:
+          (allocationResult.investorBreakdown.damon?.carry ?? 0) +
+          (allocationResult.investorBreakdown.damon?.routedToFounders ?? 0),
+        entryFeeComponent: 0,
+        managementFeeComponent: 0,
+      },
+    }
+
+    const mergedBreakdown = {
+      founders: {
+        ...fallbackBreakdown.founders,
+        ...(splitBreakdown.founders ?? {}),
+      },
+      laura: {
+        ...fallbackBreakdown.laura,
+        ...(splitBreakdown.laura ?? {}),
+      },
+      damon: {
+        ...fallbackBreakdown.damon,
+        ...(splitBreakdown.damon ?? {}),
+      },
+    }
+
+    const formattedProfit = profitValue.toFixed(2)
+    const formattedCarry = carryValue.toFixed(2)
+    const totals = allocationResult.totals
+    const capitalDays = weightResult.capitalDays
+
+    const header = [
+      'Party',
+      'Net_Amount',
+      'Base_or_Gross',
+      'Pre_Fee_Amount',
+      'Carry_To_Founders',
+      'Entry_Fee_Component',
+      'Mgmt_Fee_Component',
+      'Amount',
+      'Profit',
+      'Carry_%',
+      'Scenario',
+      'W_Founders',
+      'W_Laura',
+      'W_Damon',
+      'Carry_Total',
+      'Profit_After_Carry',
+      'Investor_Net',
+      'CapitalDays_F',
+      'CapitalDays_L',
+      'CapitalDays_D',
+    ]
+
     const rows = [
-      [
-        'Party',
-        'Amount',
-        'Profit',
-        'Carry_%',
-        'Scenario',
-        'W_Founders',
-        'W_Laura',
-        'W_Damon',
-        'Carry_Total',
-        'Profit_After_Carry',
-        'Investor_Net',
-        'CapitalDays_F',
-        'CapitalDays_L',
-        'CapitalDays_D',
-      ],
+      header,
       [
         'Founders (Yoni+Spence)',
-        allocationResult.parties.founders.toFixed(2),
-        profitValue.toFixed(2),
-        carryValue.toFixed(2),
+        formatBreakdownValue(mergedBreakdown.founders.netAmount),
+        formatBreakdownValue(mergedBreakdown.founders.baseOrGross),
+        formatBreakdownValue(mergedBreakdown.founders.preFeeAmount),
+        formatBreakdownValue(mergedBreakdown.founders.carryToFounders),
+        formatBreakdownValue(mergedBreakdown.founders.entryFeeComponent),
+        formatBreakdownValue(mergedBreakdown.founders.managementFeeComponent),
+        formatAmount(calcFounders, allocationResult.parties.founders),
+        formattedProfit,
+        formattedCarry,
         scenario,
-        formatWeightForCsv(weightResult.weights.F),
-        formatWeightForCsv(weightResult.weights.L),
-        formatWeightForCsv(weightResult.weights.D),
-        allocationResult.totals.carry.toFixed(2),
-        allocationResult.totals.afterCarry.toFixed(2),
-        allocationResult.totals.investorNet.toFixed(2),
-        weightResult.capitalDays.F.toFixed(2),
-        weightResult.capitalDays.L.toFixed(2),
-        weightResult.capitalDays.D.toFixed(2),
+        formattedWeights.F,
+        formattedWeights.L,
+        formattedWeights.D,
+        totals.carry.toFixed(2),
+        totals.afterCarry.toFixed(2),
+        totals.investorNet.toFixed(2),
+        capitalDays.F.toFixed(2),
+        capitalDays.L.toFixed(2),
+        capitalDays.D.toFixed(2),
       ],
       [
         'Laura',
-        allocationResult.parties.laura.toFixed(2),
-        profitValue.toFixed(2),
-        carryValue.toFixed(2),
+        formatBreakdownValue(mergedBreakdown.laura.netAmount),
+        formatBreakdownValue(mergedBreakdown.laura.baseOrGross),
+        formatBreakdownValue(mergedBreakdown.laura.preFeeAmount),
+        formatBreakdownValue(mergedBreakdown.laura.carryToFounders),
+        formatBreakdownValue(mergedBreakdown.laura.entryFeeComponent),
+        formatBreakdownValue(mergedBreakdown.laura.managementFeeComponent),
+        formatAmount(calcLaura, allocationResult.parties.laura),
+        formattedProfit,
+        formattedCarry,
         scenario,
-        '',
-   // --- Replace the whole conflicted region (724–845) with this:
+        formattedWeights.F,
+        formattedWeights.L,
+        formattedWeights.D,
+        totals.carry.toFixed(2),
+        totals.afterCarry.toFixed(2),
+        totals.investorNet.toFixed(2),
+        capitalDays.F.toFixed(2),
+        capitalDays.L.toFixed(2),
+        capitalDays.D.toFixed(2),
+      ],
+      [
+        'Damon',
+        formatBreakdownValue(mergedBreakdown.damon.netAmount),
+        formatBreakdownValue(mergedBreakdown.damon.baseOrGross),
+        formatBreakdownValue(mergedBreakdown.damon.preFeeAmount),
+        formatBreakdownValue(mergedBreakdown.damon.carryToFounders),
+        formatBreakdownValue(mergedBreakdown.damon.entryFeeComponent),
+        formatBreakdownValue(mergedBreakdown.damon.managementFeeComponent),
+        formatAmount(calcDamon, allocationResult.parties.damon),
+        formattedProfit,
+        formattedCarry,
+        scenario,
+        formattedWeights.F,
+        formattedWeights.L,
+        formattedWeights.D,
+        totals.carry.toFixed(2),
+        totals.afterCarry.toFixed(2),
+        totals.investorNet.toFixed(2),
+        capitalDays.F.toFixed(2),
+        capitalDays.L.toFixed(2),
+        capitalDays.D.toFixed(2),
+      ],
+    ]
 
-setOcrProgress(0)
-setOcrStatus('working')
-setOcrError('')
-setAiReport('')
+    const csvContent = rows
+      .map((row) =>
+        row
+          .map((value) => {
+            const stringValue = value === null || value === undefined ? '' : String(value)
+            return `"${stringValue.replace(/"/g, '""')}"`
+          })
+          .join(','),
+      )
+      .join('\n')
 
-let text = ''
-
-try {
-  if (useAiVision) {
-    if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
-      errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
-    } else {
-      const mapped = await llmVisionExtractFromImage(file, aiConfig)
-      applyExtractionResult(mapped)
-      setOcrStatus('done')
-      setOcrProgress(100)
-      // AI may already have provided structured results; we still keep `text` empty to trigger OCR fallback only if needed
-    }
-  }
-
-  // Fallback to on-device OCR if we don't yet have raw text (or if useAiVision is off)
-  if (!text) {
-    const result = await runOcr(file, {
-      onProgress: (p) => {
-        if (typeof p === 'number') setOcrProgress(Math.round(p * 100))
-      },
-      logger: (msg) => {
-        if (msg.status === 'recognizing text') {
-          setOcrProgress(Math.round((msg.progress || 0) * 100))
-        }
-      }
-    })
-    text = result?.data?.text ?? (typeof result === 'string' ? result : '')
-  }
-
-  if (!text || !text.trim()) {
-    setOcrText('')
-    setOcrStatus('done')
-    return
-  }
-
-  setOcrText(text)
-
-  // Heuristic extraction first (quick wins), then metrics parser for full detail
-  const heuristic = extractAdvancedFields(text)
-  applyExtractionResult({ advanced: heuristic })
-
-  const metrics = parseMetrics(text)
-  setAdvancedInputs((previous) => sanitizeParsedMetrics(previous, metrics))
-
-  setOcrStatus('done')
-  setOcrProgress(100)
-} catch (err) {
-  const message = err instanceof Error ? err.message : String(err)
-  setOcrError(message)
-  errorMessages.push(`AI extraction failed. ${message} (falling back to on-device OCR if possible).`)
-  setOcrStatus('error')
-} finally {
-  if (inputElement) inputElement.value = ''
-}
-
-
-    const pick = (...candidates) => {
-      for (const candidate of candidates) {
-        if (candidate === undefined || candidate === null) {
-          continue
-        }
-        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
-          return String(candidate)
-        }
-        if (typeof candidate === 'string') {
-          const trimmed = candidate.trim()
-          if (trimmed) {
-            return trimmed
-          }
-        }
-      }
-      return ''
-    }
-
-    const advanced = {}
-    const walletSize = pick(payload.walletSize, payload.wallet_balance, payload.balance, payload.wallet_size)
-    if (walletSize !== '') {
-      advanced.walletSize = walletSize
-    }
-    const realizedPnl = pick(
-      payload.realizedPnl,
-      payload.realized_pnl,
-      payload.realizedProfit,
-      payload.realized_profit,
-      payload.pnl,
-    )
-    if (realizedPnl !== '') {
-      advanced.pnl = realizedPnl
-    }
-    const unrealizedPnl = pick(
-      payload.unrealizedPnl,
-      payload.unrealized_pnl,
-      payload.unrealizedProfit,
-      payload.unrealized_profit,
-    )
-    if (unrealizedPnl !== '') {
-      advanced.unrealizedPnl = unrealizedPnl
-    }
-    const totalTrades = pick(payload.totalTrades, payload.total_trades, payload.tradeCount, payload.tradesTotal)
-    if (totalTrades !== '') {
-      advanced.totalTrades = totalTrades
-    }
-    const winTrades = pick(payload.winTrades, payload.win_trades, payload.winningTrades, payload.wins)
-    if (winTrades !== '') {
-      advanced.winTrades = winTrades
-    }
-    const lossTrades = pick(payload.lossTrades, payload.loss_trades, payload.losingTrades, payload.losses)
-    if (lossTrades !== '') {
-      advanced.lossTrades = lossTrades
-    }
-    const snapshotDate = pick(payload.snapshotDate, payload.snapshot_date, payload.date, payload.reportDate)
-    if (snapshotDate !== '') {
-      advanced.date = snapshotDate
-    }
-    const extraction = { advanced }
-    const carryValue = pick(
-      payload.carryPercent,
-      payload.carry_percent,
-      payload.carry_percentage,
-      payload.carryPercentDecimal,
-      payload.carry,
-    )
-    if (carryValue !== '') {
-      extraction.carry = carryValue
-    }
-
-    const profitValue =
-      realizedPnl !== '' ? realizedPnl : pick(payload.profit, payload.profitInput, payload.realized_profit)
-    if (profitValue !== '') {
-      extraction.profit = profitValue
-    }
-
-    return extraction
-  }
-
-  const applyExtractionResult = (extraction) => {
-    if (!extraction) {
-      return
-    }
-
-    const { advanced: advancedUpdates = {}, profit, carry } = extraction
-    const sanitizedAdvanced = {}
-    let sanitizedCarry = ''
-
-    Object.entries(advancedUpdates).forEach(([key, rawValue]) => {
-      if (rawValue === undefined || rawValue === null) {
-        return
-      }
-
-      if (key === 'carry') {
-        const numeric = Number(rawValue)
-        if (!Number.isNaN(numeric)) {
-          const clamped = clamp(numeric, 0, 100)
-          sanitizedCarry = String(clamped)
-          sanitizedAdvanced.carry = sanitizedCarry
-        }
-        return
-      }
-
-      const valueString =
-        typeof rawValue === 'number' && Number.isFinite(rawValue)
-          ? String(rawValue)
-          : String(rawValue).trim()
-      if (valueString !== '') {
-        sanitizedAdvanced[key] = valueString
-      }
-    })
-
-    if (!sanitizedCarry && carry !== undefined && carry !== null && carry !== '') {
-      const numeric = Number(carry)
-      if (!Number.isNaN(numeric)) {
-        const clamped = clamp(numeric, 0, 100)
-        sanitizedCarry = String(clamped)
-        sanitizedAdvanced.carry = sanitizedCarry
-      }
-    }
-
-    if (Object.keys(sanitizedAdvanced).length > 0) {
-      setAdvancedInputs((previous) => {
-        const next = { ...previous }
-        Object.entries(sanitizedAdvanced).forEach(([key, value]) => {
-          next[key] = value
-        })
-        return next
-      })
-    }
-
-    const profitSource =
-      profit !== undefined && profit !== null && profit !== ''
-        ? profit
-        : sanitizedAdvanced.pnl
-
-    if (profitSource !== undefined && profitSource !== null && profitSource !== '') {
-      const numeric = Number(profitSource)
-      if (!Number.isNaN(numeric)) {
-        const normalized = Math.max(0, numeric)
-        setProfitInput(String(normalized))
-      }
-    }
-
-    if (sanitizedCarry) {
-      setCarryInput(sanitizedCarry)
-    }
-  }
-
- main
-
-  const handleOcrUpload = async (event) => {
-    const inputElement = event.target
-    const file = inputElement.files?.[0]
-    if (!file) {
-      return
-    }
-
-    if (uploadedImage && typeof URL !== 'undefined') {
-      URL.revokeObjectURL(uploadedImage)
-    }
-
-    const previewUrl = URL.createObjectURL(file)
-    setUploadedImage(previewUrl)
-    setActiveTab('ai')
-    setOcrStatus('processing')
-    setOcrProgress(0)
-    setOcrError('')
-    setOcrText('')
-
-    const errorMessages = []
-
-    try {
-// --- Replace the whole conflicted region (724–845) with this:
-
-setOcrProgress(0)
-setOcrStatus('working')
-setOcrError('')
-setAiReport('')
-
-let text = ''
-
-try {
-  if (useAiVision) {
-    if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
-      errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
-    } else {
-      const mapped = await llmVisionExtractFromImage(file, aiConfig)
-      applyExtractionResult(mapped)
-      setOcrStatus('done')
-      setOcrProgress(100)
-      // AI may already have provided structured results; we still keep `text` empty to trigger OCR fallback only if needed
-    }
-  }
-
-  // Fallback to on-device OCR if we don't yet have raw text (or if useAiVision is off)
-  if (!text) {
-    const result = await runOcr(file, {
-      onProgress: (p) => {
-        if (typeof p === 'number') setOcrProgress(Math.round(p * 100))
-      },
-      logger: (msg) => {
-        if (msg.status === 'recognizing text') {
-          setOcrProgress(Math.round((msg.progress || 0) * 100))
-        }
-      }
-    })
-    text = result?.data?.text ?? (typeof result === 'string' ? result : '')
-  }
-
-  if (!text || !text.trim()) {
-    setOcrText('')
-    setOcrStatus('done')
-    return
-  }
-
-  setOcrText(text)
-
-  // Heuristic extraction first (quick wins), then metrics parser for full detail
-  const heuristic = extractAdvancedFields(text)
-  applyExtractionResult({ advanced: heuristic })
-
-  const metrics = parseMetrics(text)
-  setAdvancedInputs((previous) => sanitizeParsedMetrics(previous, metrics))
-
-  setOcrStatus('done')
-  setOcrProgress(100)
-} catch (err) {
-  const message = err instanceof Error ? err.message : String(err)
-  setOcrError(message)
-  errorMessages.push(`AI extraction failed. ${message} (falling back to on-device OCR if possible).`)
-  setOcrStatus('error')
-} finally {
-  if (inputElement) inputElement.value = ''
-}
-
-      setOcrStatus('error')
-      setOcrError(error instanceof Error ? error.message : 'Failed to process the screenshot')
-    } finally {
-      inputElement.value = ''
-    }
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const downloadUrl = URL.createObjectURL(blob)
+    const downloadLink = document.createElement('a')
+    downloadLink.href = downloadUrl
+    downloadLink.setAttribute('download', `profit_split_${scenario}.csv`)
+    downloadLink.click()
+    URL.revokeObjectURL(downloadUrl)
   }
 
   const handleResetOcr = () => {
