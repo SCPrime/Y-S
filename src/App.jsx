@@ -1,7 +1,50 @@
 import { useEffect, useMemo, useState } from 'react'
+codex/expand-parsedate-for-new-regex-patterns
 import Tesseract from 'tesseract.js'
+import { useEffect, useMemo, useState } from 'react'
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr'
+import './App.css'
+import { normalizeWeightInputs } from './lib/weights'
+import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs } from './lib/alloc'
+
+// weights used by the scenarios UI
+const WEIGHTS = {
+  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
+  deployed:    { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
+}
+
+import { llmOcrTextExtract, llmVisionExtractFromImage } from './lib/ai'
+
+
+codex/create-image-preprocessing-and-metrics-parser
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr.js'
+ main
+
+import { useEffect, useMemo, useState } from 'react'
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr'
 import './App.css'
 
+ codex/introduce-capital-day-tracking-and-weight-logic
+
+// weights + allocation helpers
+import { normalizeWeightInputs, computeCapitalDayWeights, normalizeClasses } from './lib/weights'
+import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs, allocateProfit, computeMoonshotDistribution } from './lib/alloc'
+import { applyFees } from './lib/fees'
+
+// weights used by the scenarios UI
+main
+main
+const WEIGHTS = {
+  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
+  deployed:    { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
+}
+codex/expand-parsedate-for-new-regex-patterns
+
+
+main
+
+
+ main
 const PARTIES = [
   { key: 'founders', label: 'Founders (Yoni+Spence)', className: 'founders' },
   { key: 'laura', label: 'Laura', className: 'laura' },
@@ -22,6 +65,7 @@ const SCENARIOS = [
     label: 'Not deployed (0 weight)',
     summary:
       'Damon is not deployed; his capital weight is zero so his carry routes to Founders.',
+ codex/introduce-capital-day-tracking-and-weight-logic
     evaluationDate: '2025-01-18',
     capitalHistory: {
       founders: [
@@ -32,12 +76,21 @@ const SCENARIOS = [
       ],
       damon: [],
     },
+
+    damonDeployed: false,
+    asOf: '2025-12-31',
+    contributions: [
+      { party: 'founders', capitalDays: 340 },
+      { party: 'laura', capitalDays: 175 },
+    ],
+main
   },
   {
     key: 'deployed',
     label: 'Deployed on 2025-08-02 (5,000 capital)',
     summary:
       'Damon is actively deployed and receives a positive weight based on his 5,000 capital contribution.',
+ codex/introduce-capital-day-tracking-and-weight-logic
     evaluationDate: '2025-10-01',
     capitalHistory: {
       founders: [
@@ -50,6 +103,15 @@ const SCENARIOS = [
         { amount: 5000, date: '2025-09-20' },
       ],
     },
+
+    damonDeployed: true,
+    asOf: '2025-12-31',
+    contributions: [
+      { party: 'founders', capitalDays: 340 },
+      { party: 'laura', capitalDays: 175 },
+      { party: 'damon', capitalDays: 55 },
+    ],
+ main
   },
 ]
 
@@ -128,6 +190,21 @@ const TABS = [
   { key: 'ai', label: 'AI query & OCR hub' },
 ]
 
+const SCENARIO_LOOKUP = Object.fromEntries(SCENARIOS.map((scenario) => [scenario.key, scenario]))
+
+const SCENARIO_WEIGHT_RESULTS = Object.fromEntries(
+  SCENARIOS.map((scenario) => [
+    scenario.key,
+    computeCapitalDayWeights(scenario.contributions ?? [], scenario.asOf ?? new Date()),
+  ]),
+)
+
+const DEFAULT_WEIGHT_RESULT = {
+  weights: { F: 0, L: 0, D: 0 },
+  capitalDays: { F: 0, L: 0, D: 0 },
+  totalCapitalDays: 0,
+}
+
 const ADVANCED_CLASSES = [
   {
     key: 'founder',
@@ -158,6 +235,8 @@ const initialAdvancedInputs = {
   lossTrades: '',
   date: '',
   carry: '',
+  entryFee: '',
+  managementFee: '',
 }
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
@@ -184,8 +263,17 @@ const formatPercent = (value) => percentFormatter.format(value)
 const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
+ codex/introduce-capital-day-tracking-and-weight-logic
 
 const calcSplit = (profit, carryPct, weights) => {
+
+codex/expand-parsedate-for-new-regex-patterns
+codex/expand-parsedate-for-new-regex-patterns
+const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
+
+const calcSplit = (profit, carryPct, scenarioKey) => {
+  const weights = getWeights(scenarioKey)
+main
   const carry = (carryPct || 0) / 100
   const founders = profit * (weights.F + carry * (weights.L + weights.D))
   const laura = profit * ((1 - carry) * weights.L)
@@ -295,21 +383,6 @@ const parsePercentage = (text, labels) => {
   return ''
 }
 
-const parseDate = (text) => {
-  const iso = text.match(/\b\d{4}-\d{2}-\d{2}\b/)
-  if (iso) return iso[0]
-
-  const slash = text.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/)
-  if (slash) return slash[0]
-
-  const month = text.match(
-    /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{2,4}\b/i,
-  )
-  if (month) return month[0]
-
-  return ''
-}
-
 const extractAdvancedFields = (text) => {
   if (!text) {
     return initialAdvancedInputs
@@ -352,7 +425,14 @@ const extractAdvancedFields = (text) => {
   ])
   const carryRaw = parsePercentage(normalizedText, ['carry', 'carry %', 'carry percent'])
   const carry = carryRaw ? String(clamp(Number(carryRaw) || 0, 0, 100)) : ''
-  const date = parseDate(text)
+  const date = parseDate(normalizedText)
+
+      }
+    }
+  }
+
+
+ main
 
   return {
     walletSize,
@@ -363,9 +443,20 @@ const extractAdvancedFields = (text) => {
     lossTrades,
     date,
     carry,
+codex/expand-parsedate-for-new-regex-patterns
   }
 }
 
+
+main
+
+    entryFee,
+    managementFee,
+  }
+}
+
+
+main
 const sanitizeNumericInput = (value) => {
   if (!value) return ''
   const sanitized = value.replace(/[^0-9.+-]/g, '')
@@ -387,21 +478,32 @@ function AdvancedFieldsSection({
   description,
   advancedInputs,
   normalizedWeights,
+  weightSum,
   advancedDistribution,
   advancedNumbers,
   combinedProfit,
+  netAdvancedProfit,
+  feeBreakdown,
   roi,
+  netRoi,
   winRate,
   lossRate,
   profitPerTrade,
+  moonshotDistribution,
   onAdvancedChange,
   onAdvancedBlur,
+ codex/introduce-capital-day-tracking-and-weight-logic
   capitalDays,
   investorPoolWeights,
   capitalHistory,
   evaluationDate,
   baseFounderPortion,
   investorPortion,
+
+  onWeightChange,
+  onWeightBlur,
+  damonDeployed,
+ main
   isWide = false,
 }) {
   const panelClasses = ['panel', 'ai-panel', 'advanced-panel']
@@ -522,12 +624,27 @@ function AdvancedFieldsSection({
           />
         </div>
         <div className="field">
-          <label htmlFor="reportDate">Snapshot date</label>
+          <label htmlFor="entryFee">Entry fee (%)</label>
           <input
-            id="reportDate"
-            name="date"
+            id="entryFee"
+            name="entryFee"
             type="text"
-            value={advancedInputs.date}
+            inputMode="decimal"
+            value={advancedInputs.entryFee}
+            onChange={onAdvancedChange}
+            onBlur={onAdvancedBlur}
+            placeholder="2"
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="managementFee">Management fee (%)</label>
+          <input
+            id="managementFee"
+const advancedNumbers = useMemo(
+  () => parseAdvancedInputs(advancedInputs),
+  [advancedInputs],
+)
+
             onChange={onAdvancedChange}
             onBlur={onAdvancedBlur}
             placeholder="2025-01-18"
@@ -566,6 +683,7 @@ function AdvancedFieldsSection({
           </p>
         </div>
         <div className="weights-summary muted" aria-live="polite">
+codex/introduce-capital-day-tracking-and-weight-logic
           {investorMessage}
         </div>
       </div>
@@ -592,6 +710,17 @@ function AdvancedFieldsSection({
         </ul>
       </div>
 
+          Normalized weights (raw sum {weightSum.toFixed(2)}) → Founder {formatPercent(normalizedWeights.founder)}, Investor{' '}
+          {formatPercent(normalizedWeights.investor)}, Moonbag {formatPercent(normalizedWeights.moonbag)}
+        </div>
+      </div>
+
+      <p className="advanced-note muted">
+        Entry and management fees reduce the combined pool before weights are applied. Entry dollars map to Founders, management
+        dollars map to Laura, and the moonbag routes to Damon.
+      </p>
+ main
+
       <div className="stat-cards">
         {ADVANCED_CLASSES.map((classification) => (
           <article key={classification.key} className={`stat-card ${classification.className}`}>
@@ -604,16 +733,69 @@ function AdvancedFieldsSection({
                 <dd>{formatPercent(normalizedWeights[classification.key])}</dd>
               </div>
               <div>
-                <dt>Share of combined PnL</dt>
+                <dt>Share of net pool</dt>
                 <dd>
-                  {combinedProfit !== 0
-                    ? formatPercent((advancedDistribution[classification.key] / combinedProfit || 0))
+                  {netAdvancedProfit !== 0
+                    ? formatPercent((advancedDistribution[classification.key] / netAdvancedProfit || 0))
                     : formatPercent(0)}
                 </dd>
               </div>
             </dl>
           </article>
         ))}
+      </div>
+
+      <div className="moonshot-section">
+        <h3>Moonshot 75/25 distribution</h3>
+        <p className="muted moonshot-note">
+          75% of the net pool routes to investor classes using the management and moonbag weights. Damon&apos;s share routes to
+          Founders when he is not deployed.
+        </p>
+        <div className="stat-cards">
+          {PARTIES.map((party) => {
+            const moonshotValue = moonshotDistribution[party.key] || 0
+            const moonshotShare =
+              moonshotDistribution.total > 0 ? moonshotValue / moonshotDistribution.total : 0
+            return (
+              <article key={`moonshot-${party.key}`} className={`stat-card ${party.className}`}>
+                <header className="stat-header">{party.label}</header>
+                <div className="stat-amount">{formatCurrency(moonshotValue)}</div>
+                <dl className="stat-meta">
+                  <div>
+                    <dt>Share of moonshot pool</dt>
+                    <dd>{formatPercent(moonshotShare)}</dd>
+                  </div>
+                  {party.key === 'founders' ? (
+                    <>
+                      <div>
+                        <dt>Base 25%</dt>
+                        <dd>{formatCurrency(moonshotDistribution.baseFounderShare)}</dd>
+                      </div>
+                      {moonshotDistribution.routed.investorPoolToFounders > 0 ||
+                      moonshotDistribution.routed.damonToFounders > 0 ? (
+                        <div>
+                          <dt>Additional routing</dt>
+                          <dd>
+                            {formatCurrency(
+                              moonshotDistribution.routed.investorPoolToFounders +
+                                moonshotDistribution.routed.damonToFounders,
+                            )}
+                          </dd>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {party.key === 'damon' && !damonDeployed ? (
+                    <div>
+                      <dt>Routed to Founders</dt>
+                      <dd>{formatCurrency(moonshotDistribution.routed.damonToFounders)}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </article>
+            )
+          })}
+        </div>
       </div>
 
       <div className="advanced-metrics">
@@ -635,8 +817,32 @@ function AdvancedFieldsSection({
             <dd>{formatCurrency(combinedProfit)}</dd>
           </div>
           <div>
-            <dt>ROI vs. wallet</dt>
+            <dt>Entry fee</dt>
+            <dd>
+              {formatCurrency(feeBreakdown.entryFee)} ({formatPercent(feeBreakdown.rates.entryFee)})
+            </dd>
+          </div>
+          <div>
+            <dt>Management fee</dt>
+            <dd>
+              {formatCurrency(feeBreakdown.managementFee)} ({formatPercent(feeBreakdown.rates.managementFee)})
+            </dd>
+          </div>
+          <div>
+            <dt>Total fees</dt>
+            <dd>{formatCurrency(feeBreakdown.totalFees)}</dd>
+          </div>
+          <div>
+            <dt>Net PnL after fees</dt>
+            <dd>{formatCurrency(netAdvancedProfit)}</dd>
+          </div>
+          <div>
+            <dt>ROI vs. wallet (gross)</dt>
             <dd>{formatPercent(roi)}</dd>
+          </div>
+          <div>
+            <dt>ROI vs. wallet (net)</dt>
+            <dd>{formatPercent(netRoi)}</dd>
           </div>
           <div>
             <dt>Profit per trade</dt>
@@ -686,24 +892,27 @@ function App() {
   const [aiStatus, setAiStatus] = useState('idle')
   const [aiError, setAiError] = useState('')
   const [aiReport, setAiReport] = useState('')
+  const [useAiVision, setUseAiVision] = useState(false)
+  const [useAiExtraction, setUseAiExtraction] = useState(false)
 
-  useEffect(() => () => {
-    if (uploadedImage && typeof URL !== 'undefined') {
-      URL.revokeObjectURL(uploadedImage)
-    }
-  }, [uploadedImage])
+  const aiConfig = useMemo(() => {
+    const apiKey = aiKey.trim()
+    const baseUrl = aiBaseUrl.trim().replace(/\/+$/, '')
+  // 909
+const { founders, laura, damon, weights, breakdown } =
+  calcSplit(profitValue, carryValue, scenario);
 
-  const handleProfitChange = (event) => {
-    setProfitInput(event.target.value)
-  }
+const scenarioDetailsDownload = SCENARIO_LOOKUP[scenario] ?? SCENARIOS[0];
+const weightResult =
+  SCENARIO_WEIGHT_RESULTS[scenarioDetailsDownload.key] ?? DEFAULT_WEIGHT_RESULT;
 
-  const handleProfitBlur = () => {
-    const normalized = Math.max(0, Number(profitInput) || 0)
-    setProfitInput(String(normalized))
-  }
+const allocationResult = allocateProfit({
+  realizedPnl: profitValue,
+  carryPercent: carryValue,
+  weights: weightResult.weights,
+  damonDeployed: scenarioDetailsDownload.damonDeployed,
+});
 
-  const handleCarryChange = (event) => {
-    setCarryInput(event.target.value)
   }
 
   const handleCarryBlur = () => {
@@ -714,75 +923,96 @@ function App() {
   const handleScenarioChange = (event) => {
     setScenario(event.target.value)
   }
-
-  const handleRecalc = () => {
-    handleProfitBlur()
-    handleCarryBlur()
-  }
-
-  const handleAdvancedChange = (event) => {
+const rows = [
+  [
+    'Party',
+    // fee breakdown (from PR #18)
+    'Net_Amount', 'Base_or_Gross', 'Pre_Fee_Amount',
+    'Carry_To_Founders', 'Entry_Fee_Component', 'Mgmt_Fee_Component',
+    // existing summary columns
+    'Amount', 'Profit', 'Carry_%', 'Scenario',
+    'W_Founders', 'W_Laura', 'W_Damon',
+    // keep the training/capital-day columns if present in your main
+    'Carry_Total', 'Profit_After_Carry', 'Investor_Net',
+    'CapitalDays_F', 'CapitalDays_L', 'CapitalDays_D',
+  ],
+const handleAdvancedBlur = (event) => {
     const { name, value } = event.target
-    setAdvancedInputs((previous) => ({ ...previous, [name]: value }))
-  }
-
-  const handleAdvancedBlur = (event) => {
-    const { name, value } = event.target
-    if (name === 'date') {
-      setAdvancedInputs((previous) => ({ ...previous, [name]: value.trim() }))
-      return
-    }
-
-    const sanitized = sanitizeNumericInput(value)
-    if (name === 'carry') {
-      const numeric = sanitized ? clamp(Number(sanitized) || 0, 0, 100) : ''
-      setAdvancedInputs((previous) => ({ ...previous, [name]: numeric === '' ? '' : String(numeric) }))
-      if (numeric !== '') {
-        setCarryInput(String(numeric))
-      }
-      return
-    }
-
-    setAdvancedInputs((previous) => ({ ...previous, [name]: sanitized }))
-  }
-
-  const scenarioAnalysis = useMemo(() => getScenarioAnalysis(scenario), [scenario])
+ [
+  'Founders (Yoni+Spence)',
+  // fee breakdown values (PR #18)
+  founders.toFixed(2),
+  breakdown.founders.gross.toFixed(2),
+  breakdown.founders.realizedBeforeFees.toFixed(2),
+  breakdown.founders.carry.toFixed(2),
+  breakdown.founders.entryFee.toFixed(2),
+  breakdown.founders.managementFee.toFixed(2),
+  // existing summary values (keep these from main)
+  allocationResult.parties?.founders?.toFixed?.(2) ?? founders.toFixed(2),
+  profitValue.toFixed(2), carryValue.toFixed(2), scenario,
+  (weightResult.weights?.F ?? weights.F),
+  (weightResult.weights?.L ?? weights.L),
+  (weightResult.weights?.D ?? weights.D),
+  // training/capital-day (keep if your header includes them; otherwise omit)
+  allocationResult.totals?.carryTotal?.toFixed?.(2) ?? '',
+  allocationResult.totals?.profitAfterCarry?.toFixed?.(2) ?? '',
+  allocationResult.investor?.net?.toFixed?.(2) ?? '',
+  weightResult.capitalDays?.F ?? '',
+  weightResult.capitalDays?.L ?? '',
+  weightResult.capitalDays?.D ?? '',
+],
+const scenarioAnalysis = useMemo(() => getScenarioAnalysis(scenario), [scenario])
 
   const handleDownload = () => {
     const profitValue = Math.max(0, Number(profitInput) || 0)
     const carryValue = clamp(Number(carryInput) || 0, 0, 100)
+ codex/introduce-capital-day-tracking-and-weight-logic
     const { founders, laura, damon } = calcSplit(profitValue, carryValue, scenarioAnalysis.weights)
 
-    const rows = [
+    const scenarioDetailsDownload = SCENARIO_LOOKUP[scenario] ?? SCENARIOS[0]
+    const weightResult =
+      SCENARIO_WEIGHT_RESULTS[scenarioDetailsDownload.key] ?? DEFAULT_WEIGHT_RESULT
+    const allocationResult = allocateProfit({
+      realizedPnl: profitValue,
+      carryPercent: carryValue,
+      weights: weightResult.weights,
       [
-        'Party',
-        'Amount',
-        'Profit',
-        'Carry_%',
-        'Scenario',
-        'Capital_Days',
-        'Scenario_Weight',
-        'Moonshot_Weight',
-      ],
-      [
-        'Founders (Yoni+Spence)',
-        founders.toFixed(2),
-        profitValue.toFixed(2),
-        carryValue.toFixed(2),
-        scenario,
-        scenarioAnalysis.capitalDays.founders.toFixed(2),
-        formatWeightForCsv(scenarioAnalysis.weights.F),
-        formatWeightForCsv(normalizedWeights.founder),
-      ],
-      [
-        'Laura',
-        laura.toFixed(2),
-        profitValue.toFixed(2),
-        carryValue.toFixed(2),
-        scenario,
-        scenarioAnalysis.capitalDays.laura.toFixed(2),
-        formatWeightForCsv(scenarioAnalysis.weights.L),
-        formatWeightForCsv(normalizedWeights.investor),
-      ],
+  'Laura',
+  laura.toFixed(2),
+  breakdown.laura.gross.toFixed(2),
+  breakdown.laura.realizedBeforeFees.toFixed(2),
+  breakdown.laura.carry.toFixed(2),
+  breakdown.laura.entryFee.toFixed(2),
+  breakdown.laura.managementFee.toFixed(2),
+
+  allocationResult.parties?.laura?.toFixed?.(2) ?? laura.toFixed(2),
+  profitValue.toFixed(2), carryValue.toFixed(2), scenario,
+  (weightResult.weights?.F ?? weights.F),
+  (weightResult.weights?.L ?? weights.L),
+  (weightResult.weights?.D ?? weights.D),
+[
+  'Damon',
+  damon.toFixed(2),
+  breakdown.damon.gross.toFixed(2),
+  breakdown.damon.realizedBeforeFees.toFixed(2),
+  breakdown.damon.carry.toFixed(2),
+  breakdown.damon.entryFee.toFixed(2),
+  breakdown.damon.managementFee.toFixed(2),
+
+  allocationResult.parties?.damon?.toFixed?.(2) ?? damon.toFixed(2),
+  profitValue.toFixed(2), carryValue.toFixed(2), scenario,
+  (weightResult.weights?.F ?? weights.F),
+  (weightResult.weights?.L ?? weights.L),
+  (weightResult.weights?.D ?? weights.D),
+
+  allocationResult.totals?.carryTotal?.toFixed?.(2) ?? '',
+  allocationResult.totals?.profitAfterCarry?.toFixed?.(2) ?? '',
+  allocationResult.investor?.net?.toFixed?.(2) ?? '',
+  weightResult.capitalDays?.F ?? '',
+  weightResult.capitalDays?.L ?? '',
+  weightResult.capitalDays?.D ?? '',
+],
+
       [
         'Damon',
         damon.toFixed(2),
@@ -854,12 +1084,239 @@ function App() {
     founder: combinedProfit * normalizedWeights.founder,
     investor: combinedProfit * normalizedWeights.investor,
     moonbag: combinedProfit * normalizedWeights.moonbag,
+
+        formatWeightForCsv(weightResult.weights.F),
+        formatWeightForCsv(weightResult.weights.L),
+        formatWeightForCsv(weightResult.weights.D),
+        allocationResult.totals.carry.toFixed(2),
+        allocationResult.totals.afterCarry.toFixed(2),
+        allocationResult.totals.investorNet.toFixed(2),
+        weightResult.capitalDays.F.toFixed(2),
+        weightResult.capitalDays.L.toFixed(2),
+        weightResult.capitalDays.D.toFixed(2),
+      ],
+      [
+        'Laura',
+        allocationResult.parties.laura.toFixed(2),
+        profitValue.toFixed(2),
+        carryValue.toFixed(2),
+        scenario,
+        '',
+   // --- Replace the whole conflicted region (724–845) with this:
+
+setOcrProgress(0)
+setOcrStatus('working')
+setOcrError('')
+setAiReport('')
+
+let text = ''
+
+try {
+  if (useAiVision) {
+    if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
+      errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
+    } else {
+      const mapped = await llmVisionExtractFromImage(file, aiConfig)
+      applyExtractionResult(mapped)
+      setOcrStatus('done')
+      setOcrProgress(100)
+      // AI may already have provided structured results; we still keep `text` empty to trigger OCR fallback only if needed
+    }
   }
 
-  const winRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.winTrades / advancedNumbers.totalTrades : 0
-  const lossRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.lossTrades / advancedNumbers.totalTrades : 0
-  const profitPerTrade = advancedNumbers.totalTrades > 0 ? advancedNumbers.pnl / advancedNumbers.totalTrades : 0
-  const roi = advancedNumbers.walletSize > 0 ? combinedProfit / advancedNumbers.walletSize : 0
+  // Fallback to on-device OCR if we don't yet have raw text (or if useAiVision is off)
+  if (!text) {
+    const result = await runOcr(file, {
+      onProgress: (p) => {
+        if (typeof p === 'number') setOcrProgress(Math.round(p * 100))
+      },
+      logger: (msg) => {
+        if (msg.status === 'recognizing text') {
+          setOcrProgress(Math.round((msg.progress || 0) * 100))
+        }
+      }
+    })
+    text = result?.data?.text ?? (typeof result === 'string' ? result : '')
+  }
+
+  if (!text || !text.trim()) {
+    setOcrText('')
+    setOcrStatus('done')
+    return
+  }
+
+  setOcrText(text)
+
+  // Heuristic extraction first (quick wins), then metrics parser for full detail
+  const heuristic = extractAdvancedFields(text)
+  applyExtractionResult({ advanced: heuristic })
+
+  const metrics = parseMetrics(text)
+  setAdvancedInputs((previous) => sanitizeParsedMetrics(previous, metrics))
+
+  setOcrStatus('done')
+  setOcrProgress(100)
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err)
+  setOcrError(message)
+  errorMessages.push(`AI extraction failed. ${message} (falling back to on-device OCR if possible).`)
+  setOcrStatus('error')
+} finally {
+  if (inputElement) inputElement.value = ''
+}
+
+
+    const pick = (...candidates) => {
+      for (const candidate of candidates) {
+        if (candidate === undefined || candidate === null) {
+          continue
+        }
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+          return String(candidate)
+        }
+        if (typeof candidate === 'string') {
+          const trimmed = candidate.trim()
+          if (trimmed) {
+            return trimmed
+          }
+        }
+      }
+      return ''
+    }
+
+    const advanced = {}
+    const walletSize = pick(payload.walletSize, payload.wallet_balance, payload.balance, payload.wallet_size)
+    if (walletSize !== '') {
+      advanced.walletSize = walletSize
+    }
+    const realizedPnl = pick(
+      payload.realizedPnl,
+      payload.realized_pnl,
+      payload.realizedProfit,
+      payload.realized_profit,
+      payload.pnl,
+    )
+    if (realizedPnl !== '') {
+      advanced.pnl = realizedPnl
+    }
+    const unrealizedPnl = pick(
+      payload.unrealizedPnl,
+      payload.unrealized_pnl,
+      payload.unrealizedProfit,
+      payload.unrealized_profit,
+    )
+    if (unrealizedPnl !== '') {
+      advanced.unrealizedPnl = unrealizedPnl
+    }
+    const totalTrades = pick(payload.totalTrades, payload.total_trades, payload.tradeCount, payload.tradesTotal)
+    if (totalTrades !== '') {
+      advanced.totalTrades = totalTrades
+    }
+    const winTrades = pick(payload.winTrades, payload.win_trades, payload.winningTrades, payload.wins)
+    if (winTrades !== '') {
+      advanced.winTrades = winTrades
+    }
+    const lossTrades = pick(payload.lossTrades, payload.loss_trades, payload.losingTrades, payload.losses)
+    if (lossTrades !== '') {
+      advanced.lossTrades = lossTrades
+    }
+    const snapshotDate = pick(payload.snapshotDate, payload.snapshot_date, payload.date, payload.reportDate)
+    if (snapshotDate !== '') {
+      advanced.date = snapshotDate
+    }
+    const extraction = { advanced }
+    const carryValue = pick(
+      payload.carryPercent,
+      payload.carry_percent,
+      payload.carry_percentage,
+      payload.carryPercentDecimal,
+      payload.carry,
+    )
+    if (carryValue !== '') {
+      extraction.carry = carryValue
+    }
+
+    const profitValue =
+      realizedPnl !== '' ? realizedPnl : pick(payload.profit, payload.profitInput, payload.realized_profit)
+    if (profitValue !== '') {
+      extraction.profit = profitValue
+    }
+
+    return extraction
+  }
+
+  const applyExtractionResult = (extraction) => {
+    if (!extraction) {
+      return
+    }
+
+    const { advanced: advancedUpdates = {}, profit, carry } = extraction
+    const sanitizedAdvanced = {}
+    let sanitizedCarry = ''
+
+    Object.entries(advancedUpdates).forEach(([key, rawValue]) => {
+      if (rawValue === undefined || rawValue === null) {
+        return
+      }
+
+      if (key === 'carry') {
+        const numeric = Number(rawValue)
+        if (!Number.isNaN(numeric)) {
+          const clamped = clamp(numeric, 0, 100)
+          sanitizedCarry = String(clamped)
+          sanitizedAdvanced.carry = sanitizedCarry
+        }
+        return
+      }
+
+      const valueString =
+        typeof rawValue === 'number' && Number.isFinite(rawValue)
+          ? String(rawValue)
+          : String(rawValue).trim()
+      if (valueString !== '') {
+        sanitizedAdvanced[key] = valueString
+      }
+    })
+
+    if (!sanitizedCarry && carry !== undefined && carry !== null && carry !== '') {
+      const numeric = Number(carry)
+      if (!Number.isNaN(numeric)) {
+        const clamped = clamp(numeric, 0, 100)
+        sanitizedCarry = String(clamped)
+        sanitizedAdvanced.carry = sanitizedCarry
+      }
+    }
+
+    if (Object.keys(sanitizedAdvanced).length > 0) {
+      setAdvancedInputs((previous) => {
+        const next = { ...previous }
+        Object.entries(sanitizedAdvanced).forEach(([key, value]) => {
+          next[key] = value
+        })
+        return next
+      })
+    }
+
+    const profitSource =
+      profit !== undefined && profit !== null && profit !== ''
+        ? profit
+        : sanitizedAdvanced.pnl
+
+    if (profitSource !== undefined && profitSource !== null && profitSource !== '') {
+      const numeric = Number(profitSource)
+      if (!Number.isNaN(numeric)) {
+        const normalized = Math.max(0, numeric)
+        setProfitInput(String(normalized))
+      }
+    }
+
+    if (sanitizedCarry) {
+      setCarryInput(sanitizedCarry)
+    }
+main
+  }
+
+ main
 
   const handleOcrUpload = async (event) => {
     const inputElement = event.target
@@ -880,39 +1337,72 @@ function App() {
     setOcrError('')
     setOcrText('')
 
+    const errorMessages = []
+
     try {
-      const result = await Tesseract.recognize(file, 'eng', {
-        logger: (message) => {
-          if (message.status === 'recognizing text') {
-            setOcrProgress(Math.round((message.progress || 0) * 100))
-          }
-        },
-      })
+// --- Replace the whole conflicted region (724–845) with this:
 
-      const text = result.data.text ?? ''
-      setOcrText(text)
-      const extracted = extractAdvancedFields(text)
-      setAdvancedInputs((previous) => {
-        const next = { ...previous }
-        Object.entries(extracted).forEach(([key, value]) => {
-          if (value !== '') {
-            next[key] = value
-          }
-        })
-        return next
-      })
+setOcrProgress(0)
+setOcrStatus('working')
+setOcrError('')
+setAiReport('')
 
-      if (extracted.pnl) {
-        const pnlValue = Math.max(0, Number(extracted.pnl) || 0)
-        setProfitInput(String(pnlValue))
-      }
+let text = ''
 
-      if (extracted.carry) {
-        setCarryInput(extracted.carry)
-      }
-
+try {
+  if (useAiVision) {
+    if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
+      errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
+    } else {
+      const mapped = await llmVisionExtractFromImage(file, aiConfig)
+      applyExtractionResult(mapped)
       setOcrStatus('done')
-    } catch (error) {
+      setOcrProgress(100)
+      // AI may already have provided structured results; we still keep `text` empty to trigger OCR fallback only if needed
+    }
+  }
+
+  // Fallback to on-device OCR if we don't yet have raw text (or if useAiVision is off)
+  if (!text) {
+    const result = await runOcr(file, {
+      onProgress: (p) => {
+        if (typeof p === 'number') setOcrProgress(Math.round(p * 100))
+      },
+      logger: (msg) => {
+        if (msg.status === 'recognizing text') {
+          setOcrProgress(Math.round((msg.progress || 0) * 100))
+        }
+      }
+    })
+    text = result?.data?.text ?? (typeof result === 'string' ? result : '')
+  }
+
+  if (!text || !text.trim()) {
+    setOcrText('')
+    setOcrStatus('done')
+    return
+  }
+
+  setOcrText(text)
+
+  // Heuristic extraction first (quick wins), then metrics parser for full detail
+  const heuristic = extractAdvancedFields(text)
+  applyExtractionResult({ advanced: heuristic })
+
+  const metrics = parseMetrics(text)
+  setAdvancedInputs((previous) => sanitizeParsedMetrics(previous, metrics))
+
+  setOcrStatus('done')
+  setOcrProgress(100)
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err)
+  setOcrError(message)
+  errorMessages.push(`AI extraction failed. ${message} (falling back to on-device OCR if possible).`)
+  setOcrStatus('error')
+} finally {
+  if (inputElement) inputElement.value = ''
+}
+
       setOcrStatus('error')
       setOcrError(error instanceof Error ? error.message : 'Failed to process the screenshot')
     } finally {
@@ -945,12 +1435,17 @@ function App() {
   }
 
   const handleGenerateReport = async () => {
-    if (!aiKey) {
+    if (!aiConfig.apiKey) {
       setAiError('An API key is required to generate the executive report.')
       return
     }
 
-    const endpoint = buildCompletionsUrl(aiBaseUrl)
+    if (!aiConfig.model) {
+      setAiError('Provide a valid model for the AI provider.')
+      return
+    }
+
+    const endpoint = buildCompletionsUrl(aiConfig.baseUrl)
     if (!endpoint) {
       setAiError('Provide a valid base URL for the AI provider.')
       return
@@ -968,10 +1463,17 @@ function App() {
       winTrades: advancedNumbers.winTrades,
       lossTrades: advancedNumbers.lossTrades,
       carryPercent: advancedInputs.carry ? Number(advancedInputs.carry) : carryValue,
+      entryFeePercent: advancedNumbers.entryFee,
+      managementFeePercent: advancedNumbers.managementFee,
+      combinedProfit,
+      netAdvancedProfit,
+      feeBreakdown,
       roi,
+      netRoi,
       winRate,
       lossRate,
       profitPerTrade,
+ codex/introduce-capital-day-tracking-and-weight-logic
       founderWeight: normalizedWeights.founder,
       investorWeight: normalizedWeights.investor,
       moonbagWeight: normalizedWeights.moonbag,
@@ -987,18 +1489,33 @@ function App() {
       investorPortion,
       capitalHistory: scenarioAnalysis.config.capitalHistory,
       capitalEvaluationDate: scenarioAnalysis.config.evaluationDate,
+
+      classWeights: normalizedWeights,
+      rawWeightSum: weightSum,
+      advancedDistribution,
+      moonshotDistribution,
+      capitalDayWeights: weights,
+      capitalDayTotals: capitalDays,
+ main
       scenario,
+      damonDeployed: scenarioDetails.damonDeployed,
+      allocation: {
+        parties: allocation.parties,
+        totals: allocation.totals,
+        carryBreakdown: allocation.carryBreakdown,
+        investorBreakdown: allocation.investorBreakdown,
+        founders: allocation.founders,
+      },
       calculator: {
         profitInput: profitValue,
         carryInput: carryValue,
-        founders,
-        laura,
-        damon,
+        distribution: allocation.parties,
+        carryRouted: allocation.carryBreakdown.total,
       },
     }
 
     const payload = {
-      model: aiModel,
+      model: aiConfig.model,
       messages: [
         {
           role: 'system',
@@ -1028,7 +1545,7 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${aiKey}`,
+          Authorization: `Bearer ${aiConfig.apiKey}`,
         },
         body: JSON.stringify(payload),
       })
@@ -1162,9 +1679,15 @@ function App() {
             </div>
 
             <div className="weights muted" aria-live="polite">
+ codex/introduce-capital-day-tracking-and-weight-logic
               Weights → Founders: {formatPercent(scenarioAnalysis.weights.F)}, Laura: {formatPercent(
                 scenarioAnalysis.weights.L,
               )}, Damon: {formatPercent(scenarioAnalysis.weights.D)} (sum {(totalWeight * 100).toFixed(2)}%)
+
+              Capital-day weights → Founders: {formatPercent(weights.F)} ({capitalDays.F.toFixed(0)} units), Laura:{' '}
+              {formatPercent(weights.L)} ({capitalDays.L.toFixed(0)} units), Damon: {formatPercent(weights.D)} ({capitalDays.D.toFixed(0)}
+              {' '}units) (sum {(totalWeight * 100).toFixed(2)}%, total {totalCapitalDays.toFixed(0)} units)
+main
             </div>
           </section>
 
@@ -1204,13 +1727,60 @@ function App() {
                     <div className="stat-amount">{formatCurrency(value)}</div>
                     <dl className="stat-meta">
                       <div>
+                        <dt>Capital weight</dt>
+                        <dd>{formatPercent(weightValue)}</dd>
+                      </div>
+                      <div>
                         <dt>Share of profit</dt>
                         <dd>{formatPercent(share)}</dd>
                       </div>
-                      <div>
-                        <dt>Scenario weight</dt>
-                        <dd>{formatPercent(weightValue)}</dd>
-                      </div>
+                      {party.key === 'founders' ? (
+                        <>
+                          <div>
+                            <dt>Carry captured</dt>
+                            <dd>{formatCurrency(allocation.carryBreakdown.total)}</dd>
+                          </div>
+                          {allocation.founders.routedFromDamon > 0 ? (
+                            <div>
+                              <dt>Routed from Damon</dt>
+                              <dd>{formatCurrency(allocation.founders.routedFromDamon)}</dd>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {party.key === 'laura' ? (
+                        <>
+                          <div>
+                            <dt>Gross before carry</dt>
+                            <dd>{formatCurrency(allocation.investorBreakdown.laura.gross)}</dd>
+                          </div>
+                          <div>
+                            <dt>Carry paid</dt>
+                            <dd>{formatCurrency(allocation.investorBreakdown.laura.carry)}</dd>
+                          </div>
+                        </>
+                      ) : null}
+                      {party.key === 'damon'
+                        ? scenarioDetails.damonDeployed
+                          ? (
+                              <>
+                                <div>
+                                  <dt>Gross before carry</dt>
+                                  <dd>{formatCurrency(allocation.investorBreakdown.damon.effectiveGross)}</dd>
+                                </div>
+                                <div>
+                                  <dt>Carry paid</dt>
+                                  <dd>{formatCurrency(allocation.investorBreakdown.damon.carry)}</dd>
+                                </div>
+                              </>
+                            )
+                          : (
+                              <div>
+                                <dt>Routed to Founders</dt>
+                                <dd>{formatCurrency(allocation.investorBreakdown.damon.routedToFounders)}</dd>
+                              </div>
+                            )
+                        : null}
                     </dl>
                   </article>
                 )
@@ -1237,9 +1807,18 @@ function App() {
               <div className="bar-row">
                 <div className="bar-label">Stacked (Total Profit)</div>
                 <div className="bar-track" aria-hidden="true">
-                  <div className="segment founders" style={{ width: `${total > 0 ? (founders / total) * 100 : 0}%` }} />
-                  <div className="segment laura" style={{ width: `${total > 0 ? (laura / total) * 100 : 0}%` }} />
-                  <div className="segment damon" style={{ width: `${total > 0 ? (damon / total) * 100 : 0}%` }} />
+                  <div
+                    className="segment founders"
+                    style={{ width: `${total > 0 ? (partyValues.founders / total) * 100 : 0}%` }}
+                  />
+                  <div
+                    className="segment laura"
+                    style={{ width: `${total > 0 ? (partyValues.laura / total) * 100 : 0}%` }}
+                  />
+                  <div
+                    className="segment damon"
+                    style={{ width: `${total > 0 ? (partyValues.damon / total) * 100 : 0}%` }}
+                  />
                 </div>
                 <div className="bar-value">{formatCurrency(total)}</div>
               </div>
@@ -1265,21 +1844,32 @@ function App() {
             description="Snapshot metrics drive a locked 75% / 25% moonshot allocation. Founders receive the base share while investor capital-days split the remaining pool across Laura and Damon."
             advancedInputs={advancedInputs}
             normalizedWeights={normalizedWeights}
+            weightSum={weightSum}
             advancedDistribution={advancedDistribution}
             advancedNumbers={advancedNumbers}
             combinedProfit={combinedProfit}
+            netAdvancedProfit={netAdvancedProfit}
+            feeBreakdown={feeBreakdown}
             roi={roi}
+            netRoi={netRoi}
             winRate={winRate}
             lossRate={lossRate}
             profitPerTrade={profitPerTrade}
+            moonshotDistribution={moonshotDistribution}
             onAdvancedChange={handleAdvancedChange}
             onAdvancedBlur={handleAdvancedBlur}
+codex/introduce-capital-day-tracking-and-weight-logic
             capitalDays={scenarioAnalysis.capitalDays}
             investorPoolWeights={investorPoolWeights}
             capitalHistory={scenarioAnalysis.config.capitalHistory}
             evaluationDate={scenarioAnalysis.config.evaluationDate}
             baseFounderPortion={baseFounderPortion}
             investorPortion={investorPortion}
+
+onWeightChange={handleWeightChange}
+            onWeightBlur={handleWeightBlur}
+            damonDeployed={scenarioDetails.damonDeployed}
+main
             isWide
           />
         </div>
@@ -1291,6 +1881,34 @@ function App() {
               Drop a Figment dashboard screenshot to automatically extract wallet size, PnL, trade counts, and carry. All OCR runs in the
               browser via Tesseract.js.
             </p>
+            <div className="ai-options" role="group" aria-label="AI extraction options">
+              <label className="ai-toggle">
+                <input
+                  type="checkbox"
+                  checked={useAiVision}
+                  onChange={(event) => setUseAiVision(event.target.checked)}
+                />
+                <span>
+                  <strong>Use AI vision extraction</strong>
+                  <span className="muted">
+                    Skip on-device OCR and let your BYOK model extract structured values directly from the screenshot.
+                  </span>
+                </span>
+              </label>
+              <label className="ai-toggle">
+                <input
+                  type="checkbox"
+                  checked={useAiExtraction}
+                  onChange={(event) => setUseAiExtraction(event.target.checked)}
+                />
+                <span>
+                  <strong>Enhance OCR with AI JSON mode</strong>
+                  <span className="muted">
+                    Run Tesseract locally, then merge any non-null fields returned by your BYOK chat model.
+                  </span>
+                </span>
+              </label>
+            </div>
             <label className={`upload-zone ${ocrStatus === 'processing' ? 'uploading' : ''}`}>
               <input type="file" accept="image/*" onChange={handleOcrUpload} />
               <span>
