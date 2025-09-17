@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { runOcr, parseMetrics, sanitizeParsedMetrics, initialAdvancedInputs } from './lib/ocr'
 import './App.css'
+codex/add-ai-extraction-and-vision-support
  codex/add-ai-extraction-and-vision-support
 import { llmOcrTextExtract, llmVisionExtractFromImage } from './lib/ai'
 
@@ -8,10 +9,22 @@ import { llmOcrTextExtract, llmVisionExtractFromImage } from './lib/ai'
 codex/create-image-preprocessing-and-metrics-parser
 import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr.js'
  main
+=======
+import { useEffect, useMemo, useState } from 'react'
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr'
+import './App.css'
+
+// weights + allocation helpers
+import { normalizeWeightInputs, computeCapitalDayWeights, normalizeClasses } from './lib/weights'
+import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs, allocateProfit, computeMoonshotDistribution } from './lib/alloc'
+import { applyFees } from './lib/fees'
+
+// weights used by the scenarios UI
+main
 const WEIGHTS = {
- 
-import { normalizeWeightInputs } from './lib/weights.js'
-import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs } from './lib/alloc.js'
+  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
+  deployed:    { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
+}
 
 
 const PARTIES = [
@@ -32,12 +45,25 @@ const SCENARIOS = [
     label: 'Not deployed (0 weight)',
     summary:
       'Damon is not deployed; his capital weight is zero so his carry routes to Founders.',
+    damonDeployed: false,
+    asOf: '2025-12-31',
+    contributions: [
+      { party: 'founders', capitalDays: 340 },
+      { party: 'laura', capitalDays: 175 },
+    ],
   },
   {
     key: 'deployed',
     label: 'Deployed on 2025-08-02 (5,000 capital)',
     summary:
       'Damon is actively deployed and receives a positive weight based on his 5,000 capital contribution.',
+    damonDeployed: true,
+    asOf: '2025-12-31',
+    contributions: [
+      { party: 'founders', capitalDays: 340 },
+      { party: 'laura', capitalDays: 175 },
+      { party: 'damon', capitalDays: 55 },
+    ],
   },
 ]
 
@@ -45,6 +71,21 @@ const TABS = [
   { key: 'calculator', label: 'Profit split calculator' },
   { key: 'ai', label: 'AI query & OCR hub' },
 ]
+
+const SCENARIO_LOOKUP = Object.fromEntries(SCENARIOS.map((scenario) => [scenario.key, scenario]))
+
+const SCENARIO_WEIGHT_RESULTS = Object.fromEntries(
+  SCENARIOS.map((scenario) => [
+    scenario.key,
+    computeCapitalDayWeights(scenario.contributions ?? [], scenario.asOf ?? new Date()),
+  ]),
+)
+
+const DEFAULT_WEIGHT_RESULT = {
+  weights: { F: 0, L: 0, D: 0 },
+  capitalDays: { F: 0, L: 0, D: 0 },
+  totalCapitalDays: 0,
+}
 
 const ADVANCED_CLASSES = [
   {
@@ -76,6 +117,8 @@ const initialAdvancedInputs = {
   lossTrades: '',
   date: '',
   carry: '',
+  entryFee: '',
+  managementFee: '',
 }
 
 const initialWeightInputs = {
@@ -109,6 +152,27 @@ const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
 
+      }
+    }
+  }
+
+
+
+  return {
+    walletSize,
+    pnl,
+    unrealizedPnl,
+    totalTrades,
+    winTrades,
+    lossTrades,
+    date,
+    carry,
+    entryFee,
+    managementFee,
+  }
+}
+
+
 const sanitizeNumericInput = (value) => {
   if (!value) return ''
   const sanitized = value.replace(/[^0-9.+-]/g, '')
@@ -131,17 +195,23 @@ function AdvancedFieldsSection({
   advancedInputs,
   weightInputs,
   normalizedWeights,
+  weightSum,
   advancedDistribution,
   advancedNumbers,
   combinedProfit,
+  netAdvancedProfit,
+  feeBreakdown,
   roi,
+  netRoi,
   winRate,
   lossRate,
   profitPerTrade,
+  moonshotDistribution,
   onAdvancedChange,
   onAdvancedBlur,
   onWeightChange,
   onWeightBlur,
+  damonDeployed,
   isWide = false,
 }) {
   const panelClasses = ['panel', 'ai-panel', 'advanced-panel']
@@ -254,6 +324,32 @@ function AdvancedFieldsSection({
           />
         </div>
         <div className="field">
+          <label htmlFor="entryFee">Entry fee (%)</label>
+          <input
+            id="entryFee"
+            name="entryFee"
+            type="text"
+            inputMode="decimal"
+            value={advancedInputs.entryFee}
+            onChange={onAdvancedChange}
+            onBlur={onAdvancedBlur}
+            placeholder="2"
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="managementFee">Management fee (%)</label>
+          <input
+            id="managementFee"
+            name="managementFee"
+            type="text"
+            inputMode="decimal"
+            value={advancedInputs.managementFee}
+            onChange={onAdvancedChange}
+            onBlur={onAdvancedBlur}
+            placeholder="0"
+          />
+        </div>
+        <div className="field">
           <label htmlFor="reportDate">Snapshot date</label>
           <input
             id="reportDate"
@@ -305,14 +401,14 @@ function AdvancedFieldsSection({
           />
         </div>
         <div className="weights-summary muted" aria-live="polite">
-          Normalized weights → Founder {formatPercent(normalizedWeights.founder)}, Investor {formatPercent(
-            normalizedWeights.investor,
-          )}, Moonbag {formatPercent(normalizedWeights.moonbag)}
+          Normalized weights (raw sum {weightSum.toFixed(2)}) → Founder {formatPercent(normalizedWeights.founder)}, Investor{' '}
+          {formatPercent(normalizedWeights.investor)}, Moonbag {formatPercent(normalizedWeights.moonbag)}
         </div>
       </div>
 
       <p className="advanced-note muted">
-        Entry dollars map to Founders, management dollars map to Laura, and the moonbag routes to Damon.
+        Entry and management fees reduce the combined pool before weights are applied. Entry dollars map to Founders, management
+        dollars map to Laura, and the moonbag routes to Damon.
       </p>
 
       <div className="stat-cards">
@@ -327,16 +423,69 @@ function AdvancedFieldsSection({
                 <dd>{formatPercent(normalizedWeights[classification.key])}</dd>
               </div>
               <div>
-                <dt>Share of combined PnL</dt>
+                <dt>Share of net pool</dt>
                 <dd>
-                  {combinedProfit !== 0
-                    ? formatPercent((advancedDistribution[classification.key] / combinedProfit || 0))
+                  {netAdvancedProfit !== 0
+                    ? formatPercent((advancedDistribution[classification.key] / netAdvancedProfit || 0))
                     : formatPercent(0)}
                 </dd>
               </div>
             </dl>
           </article>
         ))}
+      </div>
+
+      <div className="moonshot-section">
+        <h3>Moonshot 75/25 distribution</h3>
+        <p className="muted moonshot-note">
+          75% of the net pool routes to investor classes using the management and moonbag weights. Damon&apos;s share routes to
+          Founders when he is not deployed.
+        </p>
+        <div className="stat-cards">
+          {PARTIES.map((party) => {
+            const moonshotValue = moonshotDistribution[party.key] || 0
+            const moonshotShare =
+              moonshotDistribution.total > 0 ? moonshotValue / moonshotDistribution.total : 0
+            return (
+              <article key={`moonshot-${party.key}`} className={`stat-card ${party.className}`}>
+                <header className="stat-header">{party.label}</header>
+                <div className="stat-amount">{formatCurrency(moonshotValue)}</div>
+                <dl className="stat-meta">
+                  <div>
+                    <dt>Share of moonshot pool</dt>
+                    <dd>{formatPercent(moonshotShare)}</dd>
+                  </div>
+                  {party.key === 'founders' ? (
+                    <>
+                      <div>
+                        <dt>Base 25%</dt>
+                        <dd>{formatCurrency(moonshotDistribution.baseFounderShare)}</dd>
+                      </div>
+                      {moonshotDistribution.routed.investorPoolToFounders > 0 ||
+                      moonshotDistribution.routed.damonToFounders > 0 ? (
+                        <div>
+                          <dt>Additional routing</dt>
+                          <dd>
+                            {formatCurrency(
+                              moonshotDistribution.routed.investorPoolToFounders +
+                                moonshotDistribution.routed.damonToFounders,
+                            )}
+                          </dd>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {party.key === 'damon' && !damonDeployed ? (
+                    <div>
+                      <dt>Routed to Founders</dt>
+                      <dd>{formatCurrency(moonshotDistribution.routed.damonToFounders)}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </article>
+            )
+          })}
+        </div>
       </div>
 
       <div className="advanced-metrics">
@@ -358,8 +507,32 @@ function AdvancedFieldsSection({
             <dd>{formatCurrency(combinedProfit)}</dd>
           </div>
           <div>
-            <dt>ROI vs. wallet</dt>
+            <dt>Entry fee</dt>
+            <dd>
+              {formatCurrency(feeBreakdown.entryFee)} ({formatPercent(feeBreakdown.rates.entryFee)})
+            </dd>
+          </div>
+          <div>
+            <dt>Management fee</dt>
+            <dd>
+              {formatCurrency(feeBreakdown.managementFee)} ({formatPercent(feeBreakdown.rates.managementFee)})
+            </dd>
+          </div>
+          <div>
+            <dt>Total fees</dt>
+            <dd>{formatCurrency(feeBreakdown.totalFees)}</dd>
+          </div>
+          <div>
+            <dt>Net PnL after fees</dt>
+            <dd>{formatCurrency(netAdvancedProfit)}</dd>
+          </div>
+          <div>
+            <dt>ROI vs. wallet (gross)</dt>
             <dd>{formatPercent(roi)}</dd>
+          </div>
+          <div>
+            <dt>ROI vs. wallet (net)</dt>
+            <dd>{formatPercent(netRoi)}</dd>
           </div>
           <div>
             <dt>Profit per trade</dt>
@@ -475,6 +648,12 @@ function App() {
       return
     }
 
+    if (name === 'entryFee' || name === 'managementFee') {
+      const numeric = sanitized ? clamp(Number(sanitized) || 0, 0, 100) : ''
+      setAdvancedInputs((previous) => ({ ...previous, [name]: numeric === '' ? '' : String(numeric) }))
+      return
+    }
+
     setAdvancedInputs((previous) => ({ ...previous, [name]: sanitized }))
   }
 
@@ -492,63 +671,119 @@ function App() {
   const handleDownload = () => {
     const profitValue = Math.max(0, Number(profitInput) || 0)
     const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-    const { founders, laura, damon, weights } = calcSplit(profitValue, carryValue, scenario)
+    const scenarioDetailsDownload = SCENARIO_LOOKUP[scenario] ?? SCENARIOS[0]
+    const weightResult =
+      SCENARIO_WEIGHT_RESULTS[scenarioDetailsDownload.key] ?? DEFAULT_WEIGHT_RESULT
+    const allocationResult = allocateProfit({
+      realizedPnl: profitValue,
+      carryPercent: carryValue,
+      weights: weightResult.weights,
+      damonDeployed: scenarioDetailsDownload.damonDeployed,
+    })
 
     const rows = [
-      ['Party', 'Amount', 'Profit', 'Carry_%', 'Scenario', 'W_Founders', 'W_Laura', 'W_Damon'],
+      [
+        'Party',
+        'Amount',
+        'Profit',
+        'Carry_%',
+        'Scenario',
+        'W_Founders',
+        'W_Laura',
+        'W_Damon',
+        'Carry_Total',
+        'Profit_After_Carry',
+        'Investor_Net',
+        'CapitalDays_F',
+        'CapitalDays_L',
+        'CapitalDays_D',
+      ],
       [
         'Founders (Yoni+Spence)',
-        founders.toFixed(2),
+        allocationResult.parties.founders.toFixed(2),
         profitValue.toFixed(2),
         carryValue.toFixed(2),
         scenario,
-        formatWeightForCsv(weights.F),
-        formatWeightForCsv(weights.L),
-        formatWeightForCsv(weights.D),
+        formatWeightForCsv(weightResult.weights.F),
+        formatWeightForCsv(weightResult.weights.L),
+        formatWeightForCsv(weightResult.weights.D),
+        allocationResult.totals.carry.toFixed(2),
+        allocationResult.totals.afterCarry.toFixed(2),
+        allocationResult.totals.investorNet.toFixed(2),
+        weightResult.capitalDays.F.toFixed(2),
+        weightResult.capitalDays.L.toFixed(2),
+        weightResult.capitalDays.D.toFixed(2),
       ],
-      ['Laura', laura.toFixed(2), profitValue.toFixed(2), carryValue.toFixed(2), scenario, '', '', ''],
-      ['Damon', damon.toFixed(2), profitValue.toFixed(2), carryValue.toFixed(2), scenario, '', '', ''],
-    ]
+      [
+        'Laura',
+        allocationResult.parties.laura.toFixed(2),
+        profitValue.toFixed(2),
+        carryValue.toFixed(2),
+        scenario,
+        '',
+   // --- Replace the whole conflicted region (724–845) with this:
 
-    const csvContent = rows.map((row) => row.join(',')).join('\n')
-    const blob = new Blob([csvContent], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = 'profit_split_founders_laura_damon.csv'
-    anchor.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-  }
+setOcrProgress(0)
+setOcrStatus('working')
+setOcrError('')
+setAiReport('')
 
-  const profitValue = Math.max(0, Number(profitInput) || 0)
-  const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-  const { founders, laura, damon, total, weights } = calcSplit(profitValue, carryValue, scenario)
-  const totalWeight = weights.F + weights.L + weights.D
-  const partyValues = { founders, laura, damon }
-  const partyShares = {
-    founders: total > 0 ? founders / total : 0,
-    laura: total > 0 ? laura / total : 0,
-    damon: total > 0 ? damon / total : 0,
-  }
-  const scenarioDetails = SCENARIOS.find((option) => option.key === scenario) ?? SCENARIOS[0]
+let text = ''
 
-codex/create-image-preprocessing-and-metrics-parser
-  const advancedNumbers = useMemo(
-    () => ({
-      walletSize: toNumber(advancedInputs.walletSize),
-   const advancedNumbers = useMemo(() => parseAdvancedInputs(advancedInputs), [advancedInputs])
-
-  )
-
-  const { combinedProfit, advancedDistribution, winRate, lossRate, profitPerTrade, roi } = useMemo(
-    () => calculateAdvancedMetrics(advancedNumbers, normalizedWeights),
-    [advancedNumbers, normalizedWeights],
-  )
-
-  const mapAiResultToExtraction = (payload) => {
-    if (!payload || typeof payload !== 'object') {
-      return { advanced: {} }
+try {
+  if (useAiVision) {
+    if (!aiConfig.apiKey || !aiConfig.baseUrl || !aiConfig.model) {
+      errorMessages.push('Vision extraction requires a valid API key, base URL, and model.')
+    } else {
+      const mapped = await llmVisionExtractFromImage(file, aiConfig)
+      applyExtractionResult(mapped)
+      setOcrStatus('done')
+      setOcrProgress(100)
+      // AI may already have provided structured results; we still keep `text` empty to trigger OCR fallback only if needed
     }
+  }
+
+  // Fallback to on-device OCR if we don't yet have raw text (or if useAiVision is off)
+  if (!text) {
+    const result = await runOcr(file, {
+      onProgress: (p) => {
+        if (typeof p === 'number') setOcrProgress(Math.round(p * 100))
+      },
+      logger: (msg) => {
+        if (msg.status === 'recognizing text') {
+          setOcrProgress(Math.round((msg.progress || 0) * 100))
+        }
+      }
+    })
+    text = result?.data?.text ?? (typeof result === 'string' ? result : '')
+  }
+
+  if (!text || !text.trim()) {
+    setOcrText('')
+    setOcrStatus('done')
+    return
+  }
+
+  setOcrText(text)
+
+  // Heuristic extraction first (quick wins), then metrics parser for full detail
+  const heuristic = extractAdvancedFields(text)
+  applyExtractionResult({ advanced: heuristic })
+
+  const metrics = parseMetrics(text)
+  setAdvancedInputs((previous) => sanitizeParsedMetrics(previous, metrics))
+
+  setOcrStatus('done')
+  setOcrProgress(100)
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err)
+  setOcrError(message)
+  errorMessages.push(`AI extraction failed. ${message} (falling back to on-device OCR if possible).`)
+  setOcrStatus('error')
+} finally {
+  if (inputElement) inputElement.value = ''
+}
+
 
     const pick = (...candidates) => {
       for (const candidate of candidates) {
@@ -699,6 +934,8 @@ codex/create-image-preprocessing-and-metrics-parser
     }
   }
 
+ main
+
   const handleOcrUpload = async (event) => {
     const inputElement = event.target
     const file = inputElement.files?.[0]
@@ -845,23 +1082,36 @@ try {
       winTrades: advancedNumbers.winTrades,
       lossTrades: advancedNumbers.lossTrades,
       carryPercent: advancedInputs.carry ? Number(advancedInputs.carry) : carryValue,
+      entryFeePercent: advancedNumbers.entryFee,
+      managementFeePercent: advancedNumbers.managementFee,
+      combinedProfit,
+      netAdvancedProfit,
+      feeBreakdown,
       roi,
+      netRoi,
       winRate,
       lossRate,
       profitPerTrade,
-      founderWeight: normalizedWeights.founder,
-      investorWeight: normalizedWeights.investor,
-      moonbagWeight: normalizedWeights.moonbag,
-      founderAllocation: advancedDistribution.founder,
-      investorAllocation: advancedDistribution.investor,
-      moonbagAllocation: advancedDistribution.moonbag,
+      classWeights: normalizedWeights,
+      rawWeightSum: weightSum,
+      advancedDistribution,
+      moonshotDistribution,
+      capitalDayWeights: weights,
+      capitalDayTotals: capitalDays,
       scenario,
+      damonDeployed: scenarioDetails.damonDeployed,
+      allocation: {
+        parties: allocation.parties,
+        totals: allocation.totals,
+        carryBreakdown: allocation.carryBreakdown,
+        investorBreakdown: allocation.investorBreakdown,
+        founders: allocation.founders,
+      },
       calculator: {
         profitInput: profitValue,
         carryInput: carryValue,
-        founders,
-        laura,
-        damon,
+        distribution: allocation.parties,
+        carryRouted: allocation.carryBreakdown.total,
       },
     }
 
@@ -1030,8 +1280,9 @@ try {
             </div>
 
             <div className="weights muted" aria-live="polite">
-              Weights → Founders: {formatPercent(weights.F)}, Laura: {formatPercent(weights.L)}, Damon: {formatPercent(weights.D)} (sum{' '}
-              {(totalWeight * 100).toFixed(2)}%)
+              Capital-day weights → Founders: {formatPercent(weights.F)} ({capitalDays.F.toFixed(0)} units), Laura:{' '}
+              {formatPercent(weights.L)} ({capitalDays.L.toFixed(0)} units), Damon: {formatPercent(weights.D)} ({capitalDays.D.toFixed(0)}
+              {' '}units) (sum {(totalWeight * 100).toFixed(2)}%, total {totalCapitalDays.toFixed(0)} units)
             </div>
           </section>
 
@@ -1071,13 +1322,60 @@ try {
                     <div className="stat-amount">{formatCurrency(value)}</div>
                     <dl className="stat-meta">
                       <div>
+                        <dt>Capital weight</dt>
+                        <dd>{formatPercent(weightValue)}</dd>
+                      </div>
+                      <div>
                         <dt>Share of profit</dt>
                         <dd>{formatPercent(share)}</dd>
                       </div>
-                      <div>
-                        <dt>Scenario weight</dt>
-                        <dd>{formatPercent(weightValue)}</dd>
-                      </div>
+                      {party.key === 'founders' ? (
+                        <>
+                          <div>
+                            <dt>Carry captured</dt>
+                            <dd>{formatCurrency(allocation.carryBreakdown.total)}</dd>
+                          </div>
+                          {allocation.founders.routedFromDamon > 0 ? (
+                            <div>
+                              <dt>Routed from Damon</dt>
+                              <dd>{formatCurrency(allocation.founders.routedFromDamon)}</dd>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {party.key === 'laura' ? (
+                        <>
+                          <div>
+                            <dt>Gross before carry</dt>
+                            <dd>{formatCurrency(allocation.investorBreakdown.laura.gross)}</dd>
+                          </div>
+                          <div>
+                            <dt>Carry paid</dt>
+                            <dd>{formatCurrency(allocation.investorBreakdown.laura.carry)}</dd>
+                          </div>
+                        </>
+                      ) : null}
+                      {party.key === 'damon'
+                        ? scenarioDetails.damonDeployed
+                          ? (
+                              <>
+                                <div>
+                                  <dt>Gross before carry</dt>
+                                  <dd>{formatCurrency(allocation.investorBreakdown.damon.effectiveGross)}</dd>
+                                </div>
+                                <div>
+                                  <dt>Carry paid</dt>
+                                  <dd>{formatCurrency(allocation.investorBreakdown.damon.carry)}</dd>
+                                </div>
+                              </>
+                            )
+                          : (
+                              <div>
+                                <dt>Routed to Founders</dt>
+                                <dd>{formatCurrency(allocation.investorBreakdown.damon.routedToFounders)}</dd>
+                              </div>
+                            )
+                        : null}
                     </dl>
                   </article>
                 )
@@ -1104,9 +1402,18 @@ try {
               <div className="bar-row">
                 <div className="bar-label">Stacked (Total Profit)</div>
                 <div className="bar-track" aria-hidden="true">
-                  <div className="segment founders" style={{ width: `${total > 0 ? (founders / total) * 100 : 0}%` }} />
-                  <div className="segment laura" style={{ width: `${total > 0 ? (laura / total) * 100 : 0}%` }} />
-                  <div className="segment damon" style={{ width: `${total > 0 ? (damon / total) * 100 : 0}%` }} />
+                  <div
+                    className="segment founders"
+                    style={{ width: `${total > 0 ? (partyValues.founders / total) * 100 : 0}%` }}
+                  />
+                  <div
+                    className="segment laura"
+                    style={{ width: `${total > 0 ? (partyValues.laura / total) * 100 : 0}%` }}
+                  />
+                  <div
+                    className="segment damon"
+                    style={{ width: `${total > 0 ? (partyValues.damon / total) * 100 : 0}%` }}
+                  />
                 </div>
                 <div className="bar-value">{formatCurrency(total)}</div>
               </div>
@@ -1133,17 +1440,23 @@ try {
             advancedInputs={advancedInputs}
             weightInputs={weightInputs}
             normalizedWeights={normalizedWeights}
+            weightSum={weightSum}
             advancedDistribution={advancedDistribution}
             advancedNumbers={advancedNumbers}
             combinedProfit={combinedProfit}
+            netAdvancedProfit={netAdvancedProfit}
+            feeBreakdown={feeBreakdown}
             roi={roi}
+            netRoi={netRoi}
             winRate={winRate}
             lossRate={lossRate}
             profitPerTrade={profitPerTrade}
+            moonshotDistribution={moonshotDistribution}
             onAdvancedChange={handleAdvancedChange}
             onAdvancedBlur={handleAdvancedBlur}
             onWeightChange={handleWeightChange}
             onWeightBlur={handleWeightBlur}
+            damonDeployed={scenarioDetails.damonDeployed}
             isWide
           />
         </div>
