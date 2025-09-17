@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { runOcr, parseMetrics, sanitizeParsedMetrics, initialAdvancedInputs } from './lib/ocr'
 import './App.css'
-
+codex/create-image-preprocessing-and-metrics-parser
+import { runOcr, clamp, initialAdvancedInputs, parseMetrics, sanitizeParsedMetrics } from './lib/ocr.js'
 const WEIGHTS = {
-  notdeployed: { F: 340 / 515, L: 175 / 515, D: 0 / 515 },
-  deployed: { F: 340 / 570, L: 175 / 570, D: 55 / 570 },
-}
+ 
+import { normalizeWeightInputs } from './lib/weights.js'
+import { calcSplit, calculateAdvancedMetrics, parseAdvancedInputs } from './lib/alloc.js'
+
 
 const PARTIES = [
   { key: 'founders', label: 'Founders (Yoni+Spence)', className: 'founders' },
@@ -101,19 +103,6 @@ const formatPercent = (value) => percentFormatter.format(value)
 const formatInteger = (value) => integerFormatter.format(value)
 
 const formatWeightForCsv = (value) => `${(value * 100).toFixed(4)}%`
-
-const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
-
-const calcSplit = (profit, carryPct, scenarioKey) => {
-  const weights = getWeights(scenarioKey)
-  const carry = (carryPct || 0) / 100
-  const founders = profit * (weights.F + carry * (weights.L + weights.D))
-  const laura = profit * ((1 - carry) * weights.L)
-  const damon = profit * ((1 - carry) * weights.D)
-  const total = founders + laura + damon
-
-  return { founders, laura, damon, total, weights }
-}
 
 const sanitizeNumericInput = (value) => {
   if (!value) return ''
@@ -529,48 +518,18 @@ function App() {
   }
   const scenarioDetails = SCENARIOS.find((option) => option.key === scenario) ?? SCENARIOS[0]
 
+codex/create-image-preprocessing-and-metrics-parser
   const advancedNumbers = useMemo(
     () => ({
       walletSize: toNumber(advancedInputs.walletSize),
-      pnl: toNumber(advancedInputs.pnl),
-      unrealizedPnl: toNumber(advancedInputs.unrealizedPnl),
-      totalTrades: toNumber(advancedInputs.totalTrades),
-      winTrades: toNumber(advancedInputs.winTrades),
-      lossTrades: toNumber(advancedInputs.lossTrades),
-      carry: clamp(toNumber(advancedInputs.carry), 0, 100),
-    }),
-    [advancedInputs],
+   const advancedNumbers = useMemo(() => parseAdvancedInputs(advancedInputs), [advancedInputs])
+
   )
 
-  const weightNumbers = useMemo(
-    () => ({
-      founder: Math.max(0, Number(weightInputs.founder) || 0),
-      investor: Math.max(0, Number(weightInputs.investor) || 0),
-      moonbag: Math.max(0, Number(weightInputs.moonbag) || 0),
-    }),
-    [weightInputs],
+  const { combinedProfit, advancedDistribution, winRate, lossRate, profitPerTrade, roi } = useMemo(
+    () => calculateAdvancedMetrics(advancedNumbers, normalizedWeights),
+    [advancedNumbers, normalizedWeights],
   )
-
-  const weightSum = weightNumbers.founder + weightNumbers.investor + weightNumbers.moonbag
-  const normalizedWeights = weightSum > 0
-    ? {
-        founder: weightNumbers.founder / weightSum,
-        investor: weightNumbers.investor / weightSum,
-        moonbag: weightNumbers.moonbag / weightSum,
-      }
-    : { founder: 0, investor: 0, moonbag: 0 }
-
-  const combinedProfit = advancedNumbers.pnl + advancedNumbers.unrealizedPnl
-  const advancedDistribution = {
-    founder: combinedProfit * normalizedWeights.founder,
-    investor: combinedProfit * normalizedWeights.investor,
-    moonbag: combinedProfit * normalizedWeights.moonbag,
-  }
-
-  const winRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.winTrades / advancedNumbers.totalTrades : 0
-  const lossRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.lossTrades / advancedNumbers.totalTrades : 0
-  const profitPerTrade = advancedNumbers.totalTrades > 0 ? advancedNumbers.pnl / advancedNumbers.totalTrades : 0
-  const roi = advancedNumbers.walletSize > 0 ? combinedProfit / advancedNumbers.walletSize : 0
 
   const handleOcrUpload = async (event) => {
     const inputElement = event.target
