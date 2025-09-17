@@ -7,7 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "node --test tests/parse-date.test.js",
+codex/expand-parsedate-for-new-regex-patterns
+   "scripts": {
+  "dev": "vite",
+  "build": "vite build",
+  "lint": "eslint .",
+  "test": "node --test",
+  "preview": "vite preview"
+},
+
     "preview": "vite preview"
   },
   "dependencies": {
