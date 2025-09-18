@@ -1,5 +1,5 @@
 codex/add-weights,-alloc,-and-fees-modules
-import { normalizeClasses } from './weights'
+import { getWeights, normalizeClasses } from './weights.js'
 
 const PARTY_ALIASES = {
   F: 'F',
@@ -194,17 +194,53 @@ export const computeMoonshotDistribution = (
       damonToFounders: damonRouted,
     },
   }
-import { getWeights } from './weights.js'
 
 export const calcSplit = (profit, carryPct, scenarioKey) => {
-  const weights = getWeights(scenarioKey)
-  const carry = (carryPct || 0) / 100
-  const founders = profit * (weights.F + carry * (weights.L + weights.D))
-  const laura = profit * ((1 - carry) * weights.L)
-  const damon = profit * ((1 - carry) * weights.D)
-  const total = founders + laura + damon
+  const weights = getWeights(scenarioKey) ?? { F: 0, L: 0, D: 0 }
+  const sanitizedProfit = Math.max(0, Number(profit) || 0)
+  const carryRate = Math.max(0, Math.min(1, (Number(carryPct) || 0) / 100))
 
-  return { founders, laura, damon, total, weights }
+  const founderBase = sanitizedProfit * (weights.F ?? 0)
+  const lauraGross = sanitizedProfit * (weights.L ?? 0)
+  const damonGross = sanitizedProfit * (weights.D ?? 0)
+
+  const lauraCarry = lauraGross * carryRate
+  const damonCarry = damonGross * carryRate
+  const foundersCarry = lauraCarry + damonCarry
+
+  const foundersTotal = founderBase + foundersCarry
+  const lauraNet = lauraGross - lauraCarry
+  const damonNet = damonGross - damonCarry
+  const total = foundersTotal + lauraNet + damonNet
+
+  const breakdown = {
+    founders: {
+      netAmount: foundersTotal,
+      baseOrGross: founderBase,
+      preFeeAmount: founderBase + foundersCarry,
+      carryToFounders: foundersCarry,
+      entryFeeComponent: 0,
+      managementFeeComponent: 0,
+    },
+    laura: {
+      netAmount: lauraNet,
+      baseOrGross: lauraGross,
+      preFeeAmount: lauraGross,
+      carryToFounders: lauraCarry,
+      entryFeeComponent: 0,
+      managementFeeComponent: 0,
+    },
+    damon: {
+      netAmount: damonNet,
+      baseOrGross: damonGross,
+      preFeeAmount: damonGross,
+      carryToFounders: damonCarry,
+      entryFeeComponent: 0,
+      managementFeeComponent: 0,
+    },
+  }
+
+  return { founders: foundersTotal, laura: lauraNet, damon: damonNet, total, weights, breakdown }
 }
 
 export const parseAdvancedInputs = (inputs = {}) => ({
