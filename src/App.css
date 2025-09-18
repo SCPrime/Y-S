@@ -411,6 +411,36 @@ select:focus {
   font-variant-numeric: tabular-nums;
 }
 
+.stat-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.72rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 8px;
+  z-index: 1;
+}
+
+.stat-breakdown div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stat-breakdown dt {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.stat-breakdown dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  color: #f4f8ff;
+}
+
 .bars {
   display: grid;
   gap: 16px;
