@@ -80,7 +80,7 @@
         </div>
 
         <div className="weights muted" aria-live="polite">
-          Capital-day weights → Founders: {formatPercent(weights.F)} ({capitalDays.F.toFixed(0)} units), Laura:{' '}
+          Capital-day weights → Founders: {formatPercent(weights.F)} ({capitalDays.F.toFixed(0)} units), Laura{' '}
           {formatPercent(weights.L)} ({capitalDays.L.toFixed(0)} units), Damon: {formatPercent(weights.D)} ({capitalDays.D.toFixed(0)}
           {' '}units) (sum {(totalWeight * 100).toFixed(2)}%, total {totalCapitalDays.toFixed(0)} units)
         </div>
@@ -110,27 +110,16 @@
           })}
         </div>
 
-        <p className="muted" aria-live="polite">
-          Net allocations reflect carry plus an {formatPercent(breakdown.entryFeeRate)} entry fee and{' '}
-          {formatPercent(breakdown.managementFeeRate)} management fee that route investor dollars to Founders.
-        </p>
-
         <div className="stat-cards">
           {PARTIES.map((party) => {
             const value = partyValues[party.key]
             const share = partyShares[party.key]
             const weightKey = PARTY_WEIGHT_KEYS[party.key]
             const weightValue = weights[weightKey]
-            const partyBreakdown = breakdown[party.key]
-            const isFounders = party.key === 'founders'
-            const description = isFounders
-              ? 'Base share plus carry, entry, and management fees routed from investors.'
-              : 'Net after carry, entry, and management fees routed to Founders.'
             return (
               <article key={party.key} className={`stat-card ${party.className}`}>
                 <header className="stat-header">{party.label}</header>
                 <div className="stat-amount">{formatCurrency(value)}</div>
-                <p className="stat-description">{description}</p>
                 <dl className="stat-meta">
                   <div>
                     <dt>Capital weight</dt>
@@ -188,51 +177,6 @@
                         )
                     : null}
                 </dl>
-                <dl className="stat-breakdown">
-                  {isFounders ? (
-                    <>
-                      <div>
-                        <dt>Base share</dt>
-                        <dd>{formatCurrency(partyBreakdown.base)}</dd>
-                      </div>
-                      <div>
-                        <dt>Carry intake ({formatPercent(breakdown.carryRate)})</dt>
-                        <dd>{formatCurrency(partyBreakdown.carry)}</dd>
-                      </div>
-                      <div>
-                        <dt>Entry fees ({formatPercent(breakdown.entryFeeRate)})</dt>
-                        <dd>{formatCurrency(partyBreakdown.entryFee)}</dd>
-                      </div>
-                      <div>
-                        <dt>Mgmt fees ({formatPercent(breakdown.managementFeeRate)})</dt>
-                        <dd>{formatCurrency(partyBreakdown.managementFee)}</dd>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div>
-                        <dt>Gross before carry</dt>
-                        <dd>{formatCurrency(partyBreakdown.gross)}</dd>
-                      </div>
-                      <div>
-                        <dt>Carry to Founders ({formatPercent(breakdown.carryRate)})</dt>
-                        <dd>{formatCurrency(partyBreakdown.carry)}</dd>
-                      </div>
-                      <div>
-                        <dt>Realized pre-fees</dt>
-                        <dd>{formatCurrency(partyBreakdown.realizedBeforeFees)}</dd>
-                      </div>
-                      <div>
-                        <dt>Entry fee to Founders ({formatPercent(breakdown.entryFeeRate)})</dt>
-                        <dd>{formatCurrency(partyBreakdown.entryFee)}</dd>
-                      </div>
-                      <div>
-                        <dt>Mgmt fee to Founders ({formatPercent(breakdown.managementFeeRate)})</dt>
-                        <dd>{formatCurrency(partyBreakdown.managementFee)}</dd>
-                      </div>
-                    </>
-                  )}
-                </dl>
               </article>
             )
           })}
@@ -276,20 +220,16 @@
         </div>
 
         <div className="formulas muted" aria-live="polite">
-          <div className="formula-head">Allocation flow</div>
+          <div className="formula-head">Formulas (P = profit, c = carry as decimal)</div>
           <ul>
             <li>
-              Gross share starts at P×W<sub>i</sub> for each party before fees.
+              Founders = P×W<sub>F</sub> + c×P×(W<sub>L</sub> + W<sub>D</sub>)
             </li>
             <li>
-              Founders collect {formatPercent(breakdown.carryRate)} carry on Laura and Damon&apos;s gross allocations.
+              Laura = (1 − c)×P×W<sub>L</sub>
             </li>
             <li>
-              Realized investor profit pays a {formatPercent(breakdown.entryFeeRate)} entry fee routed to Founders.
-            </li>
-            <li>
-              The post-entry balance pays a {formatPercent(breakdown.managementFeeRate)} management fee that also routes to
-              Founders.
+              Damon = (1 − c)×P×W<sub>D</sub>
             </li>
           </ul>
         </div>
@@ -308,8 +248,8 @@
         feeBreakdown={feeBreakdown}
         roi={roi}
         netRoi={netRoi}
-        winRate={0}
-        lossRate={0}
+        winRate={winRate}
+        lossRate={lossRate}
         profitPerTrade={profitPerTrade}
         moonshotDistribution={moonshotDistribution}
         onAdvancedChange={handleAdvancedChange}
@@ -414,8 +354,8 @@
         advancedNumbers={advancedNumbers}
         combinedProfit={combinedProfit}
         roi={roi}
-        winRate={0}
-        lossRate={0}
+        winRate={winRate}
+        lossRate={lossRate}
         profitPerTrade={profitPerTrade}
         onAdvancedChange={handleAdvancedChange}
         onAdvancedBlur={handleAdvancedBlur}
