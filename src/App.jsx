@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Tesseract from 'tesseract.js'
+import { clamp, extractAdvancedFields, initialAdvancedInputs, parseDate } from './lib/ocr.js'
 import './App.css'
 
 const WEIGHTS = {
@@ -60,16 +61,6 @@ const ADVANCED_CLASSES = [
   },
 ]
 
-const initialAdvancedInputs = {
-  walletSize: '',
-  pnl: '',
-  unrealizedPnl: '',
-  totalTrades: '',
-  winTrades: '',
-  lossTrades: '',
-  date: '',
-  carry: '',
-}
 
 const initialWeightInputs = {
   founder: '50',
@@ -94,7 +85,6 @@ const integerFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 })
 
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
 const formatCurrency = (value) => currencyFormatter.format(value)
 const formatPercent = (value) => percentFormatter.format(value)
@@ -115,240 +105,6 @@ const calcSplit = (profit, carryPct, scenarioKey) => {
   return { founders, laura, damon, total, weights }
 }
 
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-const normalizeMagnitude = (raw) => {
-  if (!raw) return ''
-  const trimmed = raw.trim()
-  const magnitudeMatch = trimmed.match(/([kKmM])$/)
-  const isNegative = trimmed.startsWith('(') && trimmed.endsWith(')')
-  const sanitized = trimmed.replace(/[^0-9.+-]/g, '')
-  if (!sanitized) return ''
-  let numeric = Number(sanitized)
-  if (Number.isNaN(numeric)) return ''
-  if (isNegative && numeric > 0) {
-    numeric *= -1
-  }
-  if (!magnitudeMatch) {
-    return String(numeric)
-  }
-  const mag = magnitudeMatch[1].toLowerCase()
-  const multiplier = mag === 'k' ? 1_000 : 1_000_000
-  return String(numeric * multiplier)
-}
-
-const numericTokenRegex = /([-+]?[$]?\d[\d,]*(?:\.\d+)?(?:\s?[kKmM])?)/
-const percentTokenRegex = /([-+]?\d+(?:\.\d+)?)\s*%/
-
-const parseLabeledNumber = (text, labels) => {
-  const lines = text.split(/\r?\n/).map((line) => line.trim())
-
-  for (const label of labels) {
-    const labelLower = label.toLowerCase()
-    for (let index = 0; index < lines.length; index += 1) {
-      const current = lines[index]
-      const currentLower = current.toLowerCase()
-      if (!currentLower.includes(labelLower)) {
-        continue
-      }
-      const inlineMatch = current.match(numericTokenRegex)
-      if (inlineMatch?.[1]) {
-        const normalized = normalizeMagnitude(inlineMatch[1])
-        if (normalized) return normalized
-      }
-      const nextLine = lines[index + 1]
-      if (nextLine) {
-        const nextMatch = nextLine.match(numericTokenRegex)
-        if (nextMatch?.[1]) {
-          const normalized = normalizeMagnitude(nextMatch[1])
-          if (normalized) return normalized
-        }
-      }
-    }
-  }
-
-  for (const label of labels) {
-    const regex = new RegExp(`\\b${escapeRegex(label)}\\b[\\s:=\u2013-]*${numericTokenRegex.source}`, 'i')
-    const match = regex.exec(text)
-    if (match?.[1]) {
-      const normalized = normalizeMagnitude(match[1])
-      if (normalized) return normalized
-    }
-  }
-
-  return ''
-}
-
-const parsePercentage = (text, labels) => {
-  const lines = text.split(/\r?\n/).map((line) => line.trim())
-
-  for (const label of labels) {
-    const labelLower = label.toLowerCase()
-    for (let index = 0; index < lines.length; index += 1) {
-      const current = lines[index]
-      const currentLower = current.toLowerCase()
-      if (!currentLower.includes(labelLower)) {
-        continue
-      }
-      const inlineMatch = current.match(percentTokenRegex)
-      if (inlineMatch?.[1]) {
-        return inlineMatch[1]
-      }
-      const nextLine = lines[index + 1]
-      if (nextLine) {
-        const nextMatch = nextLine.match(percentTokenRegex)
-        if (nextMatch?.[1]) {
-          return nextMatch[1]
-        }
-      }
-    }
-  }
-
-  for (const label of labels) {
-    const regex = new RegExp(`\\b${escapeRegex(label)}\\b[\\s:=\u2013-]*${percentTokenRegex.source}`, 'i')
-    const match = regex.exec(text)
-    if (match?.[1]) {
-      return match[1]
-    }
-  }
-
-  return ''
-}
-
-const MONTH_NAME_MAP = {
-  jan: '01',
-  feb: '02',
-  mar: '03',
-  apr: '04',
-  may: '05',
-  jun: '06',
-  jul: '07',
-  aug: '08',
-  sep: '09',
-  oct: '10',
-  nov: '11',
-  dec: '12',
-}
-
-const normalizeYear = (value) => {
-  if (!value) return ''
-  let numeric = Number(value)
-  if (Number.isNaN(numeric)) return ''
-  if (value.length === 2) {
-    numeric += numeric >= 50 ? 1900 : 2000
-  }
-  if (numeric < 1000 || numeric > 9999) return ''
-  return String(numeric).padStart(4, '0')
-}
-
-const toIsoDate = (year, month, day) => {
-  const normalizedYear = normalizeYear(year)
-  const monthNumber = Number(month)
-  const dayNumber = Number(day)
-
-  if (!normalizedYear) return ''
-  if (!Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) return ''
-  if (!Number.isInteger(dayNumber) || dayNumber < 1 || dayNumber > 31) return ''
-
-  const monthPart = String(monthNumber).padStart(2, '0')
-  const dayPart = String(dayNumber).padStart(2, '0')
-  return `${normalizedYear}-${monthPart}-${dayPart}`
-}
-
-const parseMonthToken = (token) => {
-  if (!token) return ''
-  const normalized = token.replace(/\./g, '').toLowerCase()
-  const key = normalized.slice(0, 3)
-  return MONTH_NAME_MAP[key] ?? ''
-}
-
-const parseDate = (text) => {
-  if (!text) return ''
-
-  const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
-  if (iso) {
-    const [, year, month, day] = iso
-    const normalized = toIsoDate(year, month, day)
-    if (normalized) return normalized
-  }
-
-  const slash = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/)
-  if (slash) {
-    const [, month, day, year] = slash
-    const normalized = toIsoDate(year, month, day)
-    if (normalized) return normalized
-  }
-
-  const month = text.match(
-    /\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)(\d{2,4})\b/i,
-  )
-  if (month) {
-    const [, monthToken, day, year] = month
-    const monthValue = parseMonthToken(monthToken)
-    if (monthValue) {
-      const normalized = toIsoDate(year, monthValue, day)
-      if (normalized) return normalized
-    }
-  }
-
-  return ''
-}
-
-const extractAdvancedFields = (text) => {
-  if (!text) {
-    return initialAdvancedInputs
-  }
-
-  const normalizedText = text.replace(/\r?\n/g, '\n')
-
-  const walletSize = parseLabeledNumber(normalizedText, [
-    'wallet size',
-    'wallet balance',
-    'wallet',
-  ])
-  const pnl = parseLabeledNumber(normalizedText, [
-    'realized pnl',
-    'net pnl',
-    'pnl',
-    'p/l',
-    'profit',
-  ])
-  const unrealizedPnl = parseLabeledNumber(normalizedText, [
-    'unrealized pnl',
-    'unrealized p/l',
-    'unrealized',
-  ])
-  const totalTrades = parseLabeledNumber(normalizedText, [
-    'total trades',
-    'trades total',
-    'trade count',
-    'trades',
-  ])
-  const winTrades = parseLabeledNumber(normalizedText, [
-    'win trades',
-    'winning trades',
-    'wins',
-  ])
-  const lossTrades = parseLabeledNumber(normalizedText, [
-    'loss trades',
-    'losing trades',
-    'losses',
-  ])
-  const carryRaw = parsePercentage(normalizedText, ['carry', 'carry %', 'carry percent'])
-  const carry = carryRaw ? String(clamp(Number(carryRaw) || 0, 0, 100)) : ''
-  const date = parseDate(text)
-
-  return {
-    walletSize,
-    pnl,
-    unrealizedPnl,
-    totalTrades,
-    winTrades,
-    lossTrades,
-    date,
-    carry,
-  }
-}
 
 const sanitizeNumericInput = (value) => {
   if (!value) return ''
@@ -1428,4 +1184,3 @@ function App() {
 }
 
 export default App
-export { parseDate }
