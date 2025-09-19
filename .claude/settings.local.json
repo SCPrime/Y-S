@@ -19,7 +19,8 @@
       "Bash(npm install)",
       "Bash(find:*)",
       "Bash(npm test)",
-      "Bash(npm run lint)"
+      "Bash(npm run lint)",
+      "Bash(npm run dev:*)"
     ],
     "deny": [],
     "ask": []
