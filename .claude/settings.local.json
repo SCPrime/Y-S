@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr:*)",
+      "Bash(for pr in 24 22 20 19 17 16 14 13)",
+      "Bash(do echo \"=== PR #$pr ===\")",
+      "Bash(done)",
+      "Bash(for pr in 13 14 16 17 19 20 22 24)",
+      "Bash(do echo \"=== PR #$pr - Checking for conflicts ===\")",
+      "Bash(git pull:*)",
+      "Bash(git rebase:*)",
+      "Bash(git merge:*)",
+      "Bash(git checkout:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
