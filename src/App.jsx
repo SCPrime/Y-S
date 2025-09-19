@@ -26,14 +26,33 @@ const SCENARIOS = [
     label: 'Not deployed (0 weight)',
     summary:
       'Damon is not deployed; his capital weight is zero so his carry routes to Founders.',
+    investorCapital: {
+      laura: 17_500,
+      damon: 0,
+    },
   },
   {
     key: 'deployed',
     label: 'Deployed on 2025-08-02 (5,000 capital)',
     summary:
       'Damon is actively deployed and receives a positive weight based on his 5,000 capital contribution.',
+    investorCapital: {
+      laura: 17_500,
+      damon: 5_000,
+    },
   },
 ]
+
+const SCENARIO_LOOKUP = SCENARIOS.reduce((map, scenarioDefinition) => {
+  map[scenarioDefinition.key] = scenarioDefinition
+  return map
+}, {})
+
+const getScenarioDetails = (scenarioKey) => SCENARIO_LOOKUP[scenarioKey] ?? SCENARIOS[0]
+
+const ENTRY_FEE_RATE = 0.1
+const MANAGEMENT_FEE_RATE = 0.2
+const DEFAULT_INVESTOR_CAPITAL = { laura: 0, damon: 0 }
 
 const TABS = [
   { key: 'calculator', label: 'Profit split calculator' },
@@ -97,12 +116,58 @@ const getWeights = (scenarioKey) => WEIGHTS[scenarioKey] ?? WEIGHTS.notdeployed
 const calcSplit = (profit, carryPct, scenarioKey) => {
   const weights = getWeights(scenarioKey)
   const carry = (carryPct || 0) / 100
-  const founders = profit * (weights.F + carry * (weights.L + weights.D))
-  const laura = profit * ((1 - carry) * weights.L)
-  const damon = profit * ((1 - carry) * weights.D)
+  const scenarioDetails = getScenarioDetails(scenarioKey)
+  const investorCapital = scenarioDetails?.investorCapital ?? DEFAULT_INVESTOR_CAPITAL
+
+  const foundersPreFee = profit * (weights.F + carry * (weights.L + weights.D))
+  const lauraPreFee = profit * ((1 - carry) * weights.L)
+  const damonPreFee = profit * ((1 - carry) * weights.D)
+
+  const entryFeeLaura = (investorCapital.laura || 0) * ENTRY_FEE_RATE
+  const entryFeeDamon = (investorCapital.damon || 0) * ENTRY_FEE_RATE
+  const managementFeeLaura = lauraPreFee * MANAGEMENT_FEE_RATE
+  const managementFeeDamon = damonPreFee * MANAGEMENT_FEE_RATE
+
+  const totalEntryFees = entryFeeLaura + entryFeeDamon
+  const totalManagementFees = managementFeeLaura + managementFeeDamon
+
+  const founders = foundersPreFee + totalEntryFees + totalManagementFees
+  const laura = lauraPreFee - entryFeeLaura - managementFeeLaura
+  const damon = damonPreFee - entryFeeDamon - managementFeeDamon
   const total = founders + laura + damon
 
-  return { founders, laura, damon, total, weights }
+  return {
+    founders,
+    laura,
+    damon,
+    total,
+    weights,
+    details: {
+      base: {
+        founders: foundersPreFee,
+        laura: lauraPreFee,
+        damon: damonPreFee,
+      },
+      entryFees: {
+        founders: totalEntryFees,
+        laura: entryFeeLaura,
+        damon: entryFeeDamon,
+      },
+      managementFees: {
+        founders: totalManagementFees,
+        laura: managementFeeLaura,
+        damon: managementFeeDamon,
+      },
+      investorCapital: {
+        laura: investorCapital.laura || 0,
+        damon: investorCapital.damon || 0,
+      },
+      feeRates: {
+        entry: ENTRY_FEE_RATE,
+        management: MANAGEMENT_FEE_RATE,
+      },
+    },
+  }
 }
 
 
@@ -491,13 +556,36 @@ function App() {
   const handleDownload = () => {
     const profitValue = Math.max(0, Number(profitInput) || 0)
     const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-    const { founders, laura, damon, weights } = calcSplit(profitValue, carryValue, scenario)
+    const { founders, laura, damon, weights, details } = calcSplit(profitValue, carryValue, scenario)
 
+    const entryFeePct = (details.feeRates.entry * 100).toFixed(2)
+    const managementFeePct = (details.feeRates.management * 100).toFixed(2)
     const rows = [
-      ['Party', 'Amount', 'Profit', 'Carry_%', 'Scenario', 'W_Founders', 'W_Laura', 'W_Damon'],
+      [
+        'Party',
+        'Net_Amount',
+        'Pre_Fee_Amount',
+        'Entry_Fee',
+        'Management_Fee',
+        'Investor_Capital',
+        'Entry_Fee_%',
+        'Management_Fee_%',
+        'Profit',
+        'Carry_%',
+        'Scenario',
+        'W_Founders',
+        'W_Laura',
+        'W_Damon',
+      ],
       [
         'Founders (Yoni+Spence)',
         founders.toFixed(2),
+        details.base.founders.toFixed(2),
+        details.entryFees.founders.toFixed(2),
+        details.managementFees.founders.toFixed(2),
+        '',
+        entryFeePct,
+        managementFeePct,
         profitValue.toFixed(2),
         carryValue.toFixed(2),
         scenario,
@@ -505,8 +593,38 @@ function App() {
         formatWeightForCsv(weights.L),
         formatWeightForCsv(weights.D),
       ],
-      ['Laura', laura.toFixed(2), profitValue.toFixed(2), carryValue.toFixed(2), scenario, '', '', ''],
-      ['Damon', damon.toFixed(2), profitValue.toFixed(2), carryValue.toFixed(2), scenario, '', '', ''],
+      [
+        'Laura',
+        laura.toFixed(2),
+        details.base.laura.toFixed(2),
+        details.entryFees.laura.toFixed(2),
+        details.managementFees.laura.toFixed(2),
+        details.investorCapital.laura.toFixed(2),
+        entryFeePct,
+        managementFeePct,
+        profitValue.toFixed(2),
+        carryValue.toFixed(2),
+        scenario,
+        '',
+        '',
+        '',
+      ],
+      [
+        'Damon',
+        damon.toFixed(2),
+        details.base.damon.toFixed(2),
+        details.entryFees.damon.toFixed(2),
+        details.managementFees.damon.toFixed(2),
+        details.investorCapital.damon.toFixed(2),
+        entryFeePct,
+        managementFeePct,
+        profitValue.toFixed(2),
+        carryValue.toFixed(2),
+        scenario,
+        '',
+        '',
+        '',
+      ],
     ]
 
     const csvContent = rows.map((row) => row.join(',')).join('\n')
@@ -521,7 +639,7 @@ function App() {
 
   const profitValue = Math.max(0, Number(profitInput) || 0)
   const carryValue = clamp(Number(carryInput) || 0, 0, 100)
-  const { founders, laura, damon, total, weights } = calcSplit(profitValue, carryValue, scenario)
+  const { founders, laura, damon, total, weights, details } = calcSplit(profitValue, carryValue, scenario)
   const totalWeight = weights.F + weights.L + weights.D
   const partyValues = { founders, laura, damon }
   const partyShares = {
@@ -699,6 +817,12 @@ function App() {
         founders,
         laura,
         damon,
+        preFee: details.base,
+        entryFees: details.entryFees,
+        managementFees: details.managementFees,
+        feeRates: details.feeRates,
+        investorCapital: details.investorCapital,
+        feesRoutedToFounders: details.entryFees.founders + details.managementFees.founders,
       },
     }
 
@@ -879,7 +1003,8 @@ function App() {
             </p>
             <p className="muted">
               Investor-class weights for this snapshot come from the section below. Use the entry, management, and moonbag inputs
-              to align Founders, Laura, and Damon allocations with the current calculator state.
+              to align Founders, Laura, and Damon allocations with the current calculator state. Entry fees (10% of investor capital)
+              and management fees (20% of the investor profit share) now route to Founders.
             </p>
 
             <div className="legend" role="list" aria-label="Party color legend">
@@ -902,6 +1027,12 @@ function App() {
                 const share = partyShares[party.key]
                 const weightKey = PARTY_WEIGHT_KEYS[party.key]
                 const weightValue = weights[weightKey]
+                const baseAmount = details?.base?.[party.key] ?? 0
+                const entryFee = details?.entryFees?.[party.key] ?? 0
+                const managementFee = details?.managementFees?.[party.key] ?? 0
+                const investorCapital = details?.investorCapital?.[party.key] ?? null
+                const isFounders = party.key === 'founders'
+                const isInvestor = party.key === 'laura' || party.key === 'damon'
                 return (
                   <article key={party.key} className={`stat-card ${party.className}`}>
                     <header className="stat-header">{party.label}</header>
@@ -915,6 +1046,34 @@ function App() {
                         <dt>Scenario weight</dt>
                         <dd>{formatPercent(weightValue)}</dd>
                       </div>
+                      <div>
+                        <dt>Pre-fee share</dt>
+                        <dd>{formatCurrency(baseAmount)}</dd>
+                      </div>
+                      {isInvestor && investorCapital !== null ? (
+                        <div>
+                          <dt>Investor capital</dt>
+                          <dd>{formatCurrency(investorCapital)}</dd>
+                        </div>
+                      ) : null}
+                      {isInvestor ? (
+                        <>
+                          <div>
+                            <dt>Entry fee ({formatPercent(details.feeRates.entry)})</dt>
+                            <dd>-{formatCurrency(entryFee)}</dd>
+                          </div>
+                          <div>
+                            <dt>Management fee ({formatPercent(details.feeRates.management)})</dt>
+                            <dd>-{formatCurrency(managementFee)}</dd>
+                          </div>
+                        </>
+                      ) : null}
+                      {isFounders ? (
+                        <div>
+                          <dt>Total fees received</dt>
+                          <dd>+{formatCurrency(entryFee + managementFee)}</dd>
+                        </div>
+                      ) : null}
                     </dl>
                   </article>
                 )
