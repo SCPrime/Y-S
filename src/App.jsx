@@ -195,6 +195,7 @@ function AdvancedFieldsSection({
   normalizedWeights,
   advancedDistribution,
   advancedNumbers,
+  realizedProfit,
   combinedProfit,
   roi,
   winRate,
@@ -389,10 +390,10 @@ function AdvancedFieldsSection({
                 <dd>{formatPercent(normalizedWeights[classification.key])}</dd>
               </div>
               <div>
-                <dt>Share of combined PnL</dt>
+                <dt>Share of realized PnL</dt>
                 <dd>
-                  {combinedProfit !== 0
-                    ? formatPercent((advancedDistribution[classification.key] / combinedProfit || 0))
+                  {realizedProfit !== 0
+                    ? formatPercent((advancedDistribution[classification.key] / realizedProfit || 0))
                     : formatPercent(0)}
                 </dd>
               </div>
@@ -416,7 +417,7 @@ function AdvancedFieldsSection({
             <dd>{formatCurrency(advancedNumbers.unrealizedPnl)}</dd>
           </div>
           <div>
-            <dt>Combined PnL</dt>
+            <dt>Total PnL (realized + unrealized)</dt>
             <dd>{formatCurrency(combinedProfit)}</dd>
           </div>
           <div>
@@ -680,11 +681,12 @@ function App() {
       }
     : { founder: 0, investor: 0, moonbag: 0 }
 
-  const combinedProfit = advancedNumbers.pnl + advancedNumbers.unrealizedPnl
+  const realizedProfit = advancedNumbers.pnl
+  const combinedProfit = realizedProfit + advancedNumbers.unrealizedPnl
   const advancedDistribution = {
-    founder: combinedProfit * normalizedWeights.founder,
-    investor: combinedProfit * normalizedWeights.investor,
-    moonbag: combinedProfit * normalizedWeights.moonbag,
+    founder: realizedProfit * normalizedWeights.founder,
+    investor: realizedProfit * normalizedWeights.investor,
+    moonbag: realizedProfit * normalizedWeights.moonbag,
   }
 
   const winRate = advancedNumbers.totalTrades > 0 ? advancedNumbers.winTrades / advancedNumbers.totalTrades : 0
@@ -1131,6 +1133,7 @@ function App() {
             normalizedWeights={normalizedWeights}
             advancedDistribution={advancedDistribution}
             advancedNumbers={advancedNumbers}
+            realizedProfit={realizedProfit}
             combinedProfit={combinedProfit}
             roi={roi}
             winRate={winRate}
@@ -1243,6 +1246,7 @@ function App() {
             normalizedWeights={normalizedWeights}
             advancedDistribution={advancedDistribution}
             advancedNumbers={advancedNumbers}
+            realizedProfit={realizedProfit}
             combinedProfit={combinedProfit}
             roi={roi}
             winRate={winRate}
