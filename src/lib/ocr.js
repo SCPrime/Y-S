@@ -202,7 +202,7 @@ const parseMonthToken = (token) => {
   return MONTH_NAME_MAP[key] ?? ''
 }
 
-const parseDate = (text) => {
+export const parseDate = (text) => {
   if (!text) return ''
 
   const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
@@ -351,37 +351,6 @@ const parseTotalTrades = (text) => {
   return ''
 }
 
-export const parseDate = (text) => {
-  if (!text) return ''
-
-  const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
-  if (iso) {
-    const [, year, month, day] = iso
-    const normalized = toIsoDate(year, month, day)
-    if (normalized) return normalized
-  }
-
-  const slash = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/)
-  if (slash) {
-    const [, month, day, year] = slash
-    const normalized = toIsoDate(year, month, day)
-    if (normalized) return normalized
-  }
-
-  const month = text.match(
-    /\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)(\d{2,4})\b/i,
-  )
-  if (month) {
-    const [, monthToken, day, year] = month
-    const monthValue = parseMonthToken(monthToken)
-    if (monthValue) {
-      const normalized = toIsoDate(year, monthValue, day)
-      if (normalized) return normalized
-    }
-  }
-
-  return ''
-}
 
 export const extractAdvancedFields = (text) => {
   if (!text) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Tesseract from 'tesseract.js'
-import { clamp, extractAdvancedFields, initialAdvancedInputs, parseDate } from './lib/ocr.js'
+import { clamp, extractAdvancedFields, initialAdvancedInputs } from './lib/ocr.js'
 import './App.css'
 
 const WEIGHTS = {
